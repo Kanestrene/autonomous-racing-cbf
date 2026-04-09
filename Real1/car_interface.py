@@ -35,7 +35,7 @@ class CarController:
         if self.delta_max <= 0:
             return 0.0
 
-        steering = delta / self.delta_max
+        steering = -delta / self.delta_max
 
         if abs(steering) < 0.02:
             return 0.0

@@ -10,13 +10,13 @@ import time
 # =========================
 # CONFIG
 # =========================
-PC_IP = "192.168.1.20"
+PC_IP = "127.0.0.1"
 PC_PORT = 5005
 
 SHOW_WINDOW = True
 SHOW_MASK = True
 SHOW_HEATMAPS = True
-SEND_UDP = False
+SEND_UDP = True
 
 WIDTH, HEIGHT = 1280, 720
 TARGET_FPS = 30
@@ -49,6 +49,7 @@ MARK_POINTS_M = [
 ROUND_CORNER_RADIUS_M = 0.08
 ROUND_CORNER_SAMPLES = 10
 THETA_MIN_STEP_M = 0.003
+THETA_MIN_SPEED_M_S = 0.03
 
 if REF_PX_X_AXIS[0] == REF_PX_ORIGIN[0]:
     raise ValueError("Referencia invalida: pontos de calibracao com o mesmo x em pixels.")
@@ -311,6 +312,36 @@ def angle_diff_abs(a, b):
     return abs(wrap_angle_pi(a - b))
 
 
+def update_raw_theta(track, x_m, y_m, t_now):
+    track["raw_x_m"] = float(x_m)
+    track["raw_y_m"] = float(y_m)
+
+    prev_raw_pos_m = track.get("prev_raw_pos_m")
+    prev_raw_t = track.get("prev_raw_t")
+    if prev_raw_pos_m is not None:
+        dx = x_m - prev_raw_pos_m[0]
+        dy = y_m - prev_raw_pos_m[1]
+        step_m = float(np.hypot(dx, dy))
+        dt = None if prev_raw_t is None else max(1e-6, float(t_now - prev_raw_t))
+
+        if dt is not None:
+            track["raw_speed_m_s"] = step_m / dt
+
+        if step_m >= THETA_MIN_STEP_M:
+            theta_raw = float(np.arctan2(dy, dx))
+            theta_alt = wrap_angle_pi(theta_raw + np.pi)
+            theta_prev = float(track.get("raw_theta_rad", 0.0))
+
+            if angle_diff_abs(theta_raw, theta_prev) <= angle_diff_abs(theta_alt, theta_prev):
+                track["raw_theta_rad"] = theta_raw
+            else:
+                track["raw_theta_rad"] = theta_alt
+
+    track["prev_raw_pos_m"] = (x_m, y_m)
+    track["prev_raw_t"] = float(t_now)
+    return float(track.get("raw_theta_rad", 0.0))
+
+
 def update_track_theta(track):
     x_px, y_px, vx, vy, *_ = track["kf"].get()
     x_m, y_m = px_to_m(x_px, y_px)
@@ -323,7 +354,7 @@ def update_track_theta(track):
         dy = y_m - prev_pos_m[1]
         step_m = float(np.hypot(dx, dy))
 
-        if step_m >= THETA_MIN_STEP_M:
+        if step_m >= THETA_MIN_STEP_M and speed_m_s >= THETA_MIN_SPEED_M_S:
             theta_raw = float(np.arctan2(dy, dx))
             theta_alt = wrap_angle_pi(theta_raw + np.pi)
             theta_prev = float(track["theta_rad"])
@@ -603,8 +634,14 @@ def make_track(x0, y0, t_now, state_label, source, temp_id=None, tag_id=None):
         "temp_id": temp_id,
         "tag_id": tag_id,
         "theta_rad": 0.0,
+        "raw_theta_rad": 0.0,
         "speed_m_s": 0.0,
+        "raw_speed_m_s": 0.0,
         "prev_pos_m": None,
+        "prev_raw_pos_m": None,
+        "prev_raw_t": None,
+        "raw_x_m": None,
+        "raw_y_m": None,
     }
 
 
@@ -788,6 +825,7 @@ try:
         for tag in tags:
             tag_id = int(tag.tag_id)
             x_meas, y_meas = map(float, tag.center)
+            x_meas_m, y_meas_m = px_to_m(x_meas, y_meas)
             corners = tag.corners.astype(np.int32)
 
             if tag_id in confirmed_tracks:
@@ -816,12 +854,18 @@ try:
                         tag_id=tag_id
                     )
 
+            theta_raw_deg = 0.0
+            if tag_id in confirmed_tracks:
+                theta_raw_deg = float(
+                    np.degrees(update_raw_theta(confirmed_tracks[tag_id], x_meas_m, y_meas_m, t))
+                )
+
             if SHOW_WINDOW:
                 cv2.polylines(frame, [corners], True, (0, 0, 255), 2)
                 cv2.circle(frame, (int(x_meas), int(y_meas)), 5, (0, 0, 255), -1)
                 cv2.putText(
                     frame,
-                    f"RAW ID:{tag_id}",
+                    f"RAW ID:{tag_id} x={x_meas_m:.3f}m y={y_meas_m:.3f}m th={theta_raw_deg:.1f}deg",
                     (int(x_meas) + 10, int(y_meas) - 10),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.55,
@@ -922,10 +966,16 @@ try:
         for tag_id, tr in confirmed_tracks.items():
             x, y, vx, vy, ax, ay = tr["kf"].get()
             label = tr["state_label"]
-            x_m, y_m = px_to_m(x, y)
+            x_m_filt, y_m_filt = px_to_m(x, y)
             vx_m_s, vy_m_s = vel_px_to_m(vx, vy)
             ax_m_s2, ay_m_s2 = acc_px_to_m(ax, ay)
-            theta_rad, theta_deg, speed_m_s = update_track_theta(tr)
+            theta_rad_filt, theta_deg_filt, speed_m_s_filt = update_track_theta(tr)
+
+            x_m = tr["raw_x_m"] if tr.get("raw_x_m") is not None else x_m_filt
+            y_m = tr["raw_y_m"] if tr.get("raw_y_m") is not None else y_m_filt
+            theta_rad = tr.get("raw_theta_rad", theta_rad_filt)
+            theta_deg = float(np.degrees(theta_rad))
+            speed_m_s = tr.get("raw_speed_m_s", speed_m_s_filt)
 
             payload["tracks"].append({
                 "id": int(tag_id),
@@ -1022,10 +1072,12 @@ try:
             for tag_id, tr in confirmed_tracks.items():
                 x, y, vx, vy, ax, ay = tr["kf"].get()
                 label = tr["state_label"]
-                x_m, y_m = px_to_m(x, y)
+                x_m_filt, y_m_filt = px_to_m(x, y)
+                x_m = tr["raw_x_m"] if tr.get("raw_x_m") is not None else x_m_filt
+                y_m = tr["raw_y_m"] if tr.get("raw_y_m") is not None else y_m_filt
                 vx_m_s, vy_m_s = vel_px_to_m(vx, vy)
                 ax_m_s2, ay_m_s2 = acc_px_to_m(ax, ay)
-                theta_deg = float(np.degrees(tr["theta_rad"]))
+                theta_deg = float(np.degrees(tr.get("raw_theta_rad", tr["theta_rad"])))
 
                 if label == "MEAS_TAG":
                     color = (0, 255, 0)
@@ -1038,7 +1090,7 @@ try:
 
                 cv2.putText(
                     frame,
-                    f"ID:{tag_id} {label}",
+                    f"ID:{tag_id} {label} FILTRADO",
                     (int(x) + 10, int(y) - 25),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,

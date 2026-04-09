@@ -248,8 +248,8 @@ def run_real():
     '''
     # parâmetros
     dt = 0.02
-    v_ref = 0.3
-    L0 = 0.1
+    v_ref = 0.35
+    L0 = 0.35
     kv = 0.5
 
     v_max = 0.47
@@ -278,7 +278,10 @@ def run_real():
     #car.send_cmd(v=1, delta=0)
 
     # estado inicial
-    x, y, yaw, v = 0, 0, 0, 0
+    x, y, yaw, v = wait_for_initial_state()
+    print(
+        f"Estado inicial recebido: x={x:.3f} m, y={y:.3f} m, yaw={yaw:.3f} rad, v={v:.3f} m/s"
+    )
 
     try:
         while True:
@@ -289,6 +292,7 @@ def run_real():
 
             # pure pursuit
             Ld = L0 + kv * abs(v)
+            #Ld = 0.1
             state = (x, y, yaw, v)
 
             v_cmd, w_cmd, target_idx, last_near, cte = pure_pursuit_control(
@@ -335,11 +339,14 @@ def run_real():
 
             # enviar para o carro
             #car.send_heartbeat()
-            #car.send_cmd(v=v_safe, delta=delta)
-            car.send_cmd(v=0.3, delta=0.15)
+            car.send_cmd(v=v_safe, delta=delta)
+            #car.send_cmd(v=0.3, delta=0.15)
             
             # debug
-            print(f"v={v_safe:.2f}, delta={delta:.2f}, cte={cte:.3f}")
+            print(
+                f"estado: x={x:.3f} m, y={y:.3f} m, yaw={yaw:.3f} rad, v={v:.3f} m/s | "
+                f"cmd: v={v_safe:.2f} m/s, delta={delta:.2f} rad, cte={cte:.3f}"
+            )
 
             # manter frequência
             elapsed = time.time() - t0

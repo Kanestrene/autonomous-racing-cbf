@@ -102,6 +102,8 @@ def simulate():
 
     obstacles = []
 
+    '''
+
     for k, idx in enumerate(idxs):
         x_path = px[idx]
         y_path = py[idx]
@@ -124,8 +126,10 @@ def simulate():
             "r": 0.35
         })
 
+    '''
+
     # Estado inicial
-    x, y, yaw, v = 3, 3, np.deg2rad(180), 0.0
+    x, y, yaw, v = 1, 6, np.deg2rad(90), 0.0
 
     dt = 0.02
     T = 50.0
