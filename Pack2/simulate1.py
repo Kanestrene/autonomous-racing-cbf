@@ -106,7 +106,7 @@ def simulate():
 
     obstacles = []
 
-    '''
+    
     
     for k, idx in enumerate(idxs):
         x_path = px[idx]
@@ -130,7 +130,7 @@ def simulate():
             "r": 0.35
         })
 
-    '''
+    
     
     # Estado inicial
     x, y, yaw, v = 3, 3, np.deg2rad(90), 0.0
@@ -199,8 +199,8 @@ def simulate():
             last_path_idx=last_near,
             ellipse_ab=(a_ell, b_ell),
             margin=margin,
-            lookahead_l=0.1,
-            alpha=2.0,
+            lookahead_l=0.01,
+            alpha=3,
             eps_clf=0.5,
             q_clf=(1.0, 10.0, 0.01),
             W=(100000.0, 1.0),
