@@ -193,7 +193,7 @@ def cbf_clf_qp_filter(
         vmax,
         -vmin,
         wmax,
-        -wmax,
+        wmax,
         0.0
     ], dtype=float)
 

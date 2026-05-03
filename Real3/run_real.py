@@ -213,7 +213,7 @@ def run_real():
     obstacles = [dict(obstacle) for obstacle in OBSTACLES_M]
 
     dt = 0.02
-    v_ref = 0.35
+    v_ref = 0.3
 
     v_max = 0.47
     a_max = 2.0

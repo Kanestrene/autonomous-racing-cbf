@@ -233,8 +233,8 @@ def run_real():
     # parâmetros
     dt = 0.02
     v_ref = 0.38
-    L0 = 0.3
-    kv = 0.4
+    L0 = 0.5
+    kv = 0.3
 
     v_max = 0.47
     #w_max = 2.5

@@ -17,6 +17,7 @@ PC_PORT = 5005
 SHOW_WINDOW = True
 SHOW_MASK = True
 SHOW_HEATMAPS = True
+SHOW_REFERENCE_PATH = False
 SEND_UDP = True
 
 WIDTH, HEIGHT = 1280, 720
@@ -1091,26 +1092,27 @@ try:
         if SHOW_WINDOW:
             cv2.polylines(frame, [TRACK_POLYGON], True, (255, 255, 255), 2)
 
-            spline_points_m = build_rounded_polyline(
-                MARK_POINTS_M,
-                corner_radius=ROUND_CORNER_RADIUS_M,
-                corner_samples=ROUND_CORNER_SAMPLES,
-                closed=True
-            )
-            spline_points_px = []
-            for sx_m, sy_m in spline_points_m:
-                sx_px, sy_px = m_to_px(sx_m, sy_m)
-                spline_points_px.append([int(round(sx_px)), int(round(sy_px))])
-
-            if len(spline_points_px) >= 2:
-                cv2.polylines(
-                    frame,
-                    [np.array(spline_points_px, dtype=np.int32)],
-                    True,
-                    (0, 200, 255),
-                    2,
-                    cv2.LINE_AA
+            if SHOW_REFERENCE_PATH:
+                spline_points_m = build_rounded_polyline(
+                    MARK_POINTS_M,
+                    corner_radius=ROUND_CORNER_RADIUS_M,
+                    corner_samples=ROUND_CORNER_SAMPLES,
+                    closed=True
                 )
+                spline_points_px = []
+                for sx_m, sy_m in spline_points_m:
+                    sx_px, sy_px = m_to_px(sx_m, sy_m)
+                    spline_points_px.append([int(round(sx_px)), int(round(sy_px))])
+
+                if len(spline_points_px) >= 2:
+                    cv2.polylines(
+                        frame,
+                        [np.array(spline_points_px, dtype=np.int32)],
+                        True,
+                        (0, 200, 255),
+                        2,
+                        cv2.LINE_AA
+                    )
 
             for obstacle in DRAW_OBSTACLES_M:
                 ox_px, oy_px = m_to_px(obstacle["x"], obstacle["y"])
@@ -1128,19 +1130,20 @@ try:
                         1
                     )
 
-            for i, (mx, my) in enumerate(MARK_POINTS_M):
-                px, py = m_to_px(mx, my)
-                if 0 <= px < WIDTH and 0 <= py < HEIGHT:
-                    cv2.circle(frame, (int(px), int(py)), 5, (0, 128, 255), -1)
-                    cv2.putText(
-                        frame,
-                        f"P{i+1}",
-                        (int(px) + 6, int(py) - 6),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.45,
-                        (0, 128, 255),
-                        1
-                    )
+            if SHOW_REFERENCE_PATH:
+                for i, (mx, my) in enumerate(MARK_POINTS_M):
+                    px, py = m_to_px(mx, my)
+                    if 0 <= px < WIDTH and 0 <= py < HEIGHT:
+                        cv2.circle(frame, (int(px), int(py)), 5, (0, 128, 255), -1)
+                        cv2.putText(
+                            frame,
+                            f"P{i+1}",
+                            (int(px) + 6, int(py) - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.45,
+                            (0, 128, 255),
+                            1
+                        )
 
             for tag_id, tr in confirmed_tracks.items():
                 x, y, vx, vy, ax, ay = tr["kf"].get()

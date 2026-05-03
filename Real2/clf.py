@@ -47,7 +47,7 @@ def clf_row_path_tracking(px, py, pyaw, s, robot_state,
                           v_ref=1.0,
                           qx=1.0, qy=1.0, qpsi=4.0,
                           eps=1.0,
-                          lookahead_l=0.1):
+                          lookahead_l=0.5):
     x, y, theta = robot_state
     l = lookahead_l
 

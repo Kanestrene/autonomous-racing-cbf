@@ -12,8 +12,6 @@ from controller import (
     rate_limit,
 )
 
-from car_interface import CarController
-
 
 # ============================================================
 # Estado real via UDP (cam.py)
@@ -23,6 +21,13 @@ VISION_UDP_PORT = 5005
 VISION_TRACK_ID = 2
 ROUND_CORNER_RADIUS_M = 0.08
 ROUND_CORNER_SAMPLES = 10
+
+# ============================================================
+# Comandos para a ESP32 via UDP
+# ============================================================
+#ESP32_UDP_IP = "10.80.229.141"
+ESP32_UDP_IP = "10.80.229.146"
+ESP32_UDP_PORT = 5005
 
 
 class VisionPoseReceiver:
@@ -108,6 +113,27 @@ class VisionPoseReceiver:
 
 
 _vision_receiver = VisionPoseReceiver()
+
+
+class Esp32CommandSender:
+    def __init__(self, target_ip=ESP32_UDP_IP, target_port=ESP32_UDP_PORT):
+        self.target = (target_ip, target_port)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    @staticmethod
+    def format_command(v, delta):
+        return f"V:{v:.3f} D:{delta:.3f}"
+
+    def send_cmd(self, v, delta):
+        msg = self.format_command(v, delta)
+        self.sock.sendto(msg.encode("utf-8"), self.target)
+        return msg
+
+    def stop(self):
+        try:
+            self.send_cmd(0.0, 0.0)
+        finally:
+            self.sock.close()
 
 
 def get_robot_state():
@@ -252,17 +278,13 @@ def run_real():
     delta = 0.0
 
     # Parâmetros bicycle/servo
-    L = 0.04                         # entre-eixos (m)
+    L = 0.06                         # entre-eixos (m)
     delta_max = np.deg2rad(16.5)       # limite do servo
     delta_rate_max = np.deg2rad(300) # rad/s
     kappa_max = np.tan(delta_max) / L
 
-    car = CarController(v_max=v_max, delta_max=delta_max)
-    car.send_heartbeat()
-    time.sleep(0.02)
-
-    #car.send_cmd(v=0.3, delta=0.15)              
-    #car.send_cmd(v=1, delta=0)
+    esp32 = Esp32CommandSender()
+    print(f"A enviar comandos UDP para ESP32 em {ESP32_UDP_IP}:{ESP32_UDP_PORT}")
 
     # estado inicial
     x, y, yaw, v = wait_for_initial_state()
@@ -297,9 +319,9 @@ def run_real():
                 margin=margin,
                 lookahead_l=0.1,
                 alpha=2.5,
-                eps_clf=0.5,
+                eps_clf=1,
                 q_clf=(1.0, 10.0, 0.01),
-                W=(2500.0, 1.0),
+                W=(25000.0, 1.0),
                 p_slack=50.0,
                 v_ref=v_ref,
                 v_bounds=(0.0, 2.0),
@@ -323,10 +345,9 @@ def run_real():
             #delta = rate_limit(delta_cmd, delta, du_max=delta_rate_max * dt)
             delta = delta_cmd
 
-            # enviar para o carro
-            #car.send_heartbeat()
-            car.send_cmd(v=v_safe, delta=delta)
-            #car.send_cmd(v=0.3, delta=0.15)
+            # enviar para a ESP32
+            #esp32_msg = esp32.send_cmd(v=v_safe, delta=delta)
+            esp32_msg = esp32.send_cmd(v=0.35, delta=0.10)
             
             # debug
             print(
@@ -334,7 +355,7 @@ def run_real():
                 f"ref: idx={clf_info['idx']} psi_r={clf_info['psi_r']:.3f} ey={clf_info['ey']:.3f} "
                 f"epsi={clf_info['epsi']:.3f} V={clf_info['V']:.3f} | "
                 f"cmd: v={v_safe:.2f} m/s, w={w_safe:.3f} rad/s, delta_raw={delta_cmd_unclipped:.3f} rad, "
-                f"delta={delta:.3f} rad, cte={cte:.3f}"
+                f"delta={delta:.3f} rad, cte={cte:.3f} | udp='{esp32_msg}'"
             )
 
             # manter frequência
@@ -345,7 +366,7 @@ def run_real():
         print("Parado pelo utilizador")
 
     finally:
-        car.stop()
+        esp32.stop()
 
 
 if __name__ == "__main__":
