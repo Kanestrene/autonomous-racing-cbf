@@ -14,7 +14,7 @@ import os
 import time
 import json
 import socket
-from shared_config import TRACK_POINTS_M
+from shared_config import OBSTACLES_M, TRACK_POINTS_M
 
 #Global Variables
 kernel = np.ones((3,3),np.uint8)
@@ -47,7 +47,7 @@ track_trail = []
 ROUND_CORNER_RADIUS_M = 0.08
 ROUND_CORNER_SAMPLES = 10
 RAW_SPEED_UPDATE_CYCLES = 1
-RAW_THETA_MIN_UPDATE_M = 0.01
+RAW_THETA_MIN_UPDATE_M = 0.02
 
 raw_theta_rad = 0.0
 raw_speed_m_s = 0.0
@@ -328,6 +328,28 @@ def draw_reference_path(img):
             2,
             cv2.LINE_AA
         )
+
+
+def draw_obstacles(img):
+    if REF_PX_ORIGIN is None or PIXEL_TO_METER is None:
+        return
+
+    px_per_meter = abs(1.0 / PIXEL_TO_METER)
+
+    for obstacle in OBSTACLES_M:
+        ox_m = float(obstacle["x"])
+        oy_m = float(obstacle["y"])
+        radius_m = float(obstacle["r"])
+
+        ox_px, oy_px = m_to_px(ox_m, oy_m)
+        radius_px = max(1, int(round(radius_m * px_per_meter)))
+
+        if not (np.isfinite(ox_px) and np.isfinite(oy_px)):
+            continue
+
+        center = (int(round(ox_px)), int(round(oy_px)))
+        cv2.circle(img, center, radius_px, (0, 140, 255), 2, cv2.LINE_AA)
+        cv2.circle(img, center, 2, (0, 140, 255), -1, cv2.LINE_AA)
 
 
 def build_udp_payload(frame_counter, x_px, y_px, x_m, y_m):
@@ -751,6 +773,7 @@ def main():
             continue
 
         draw_reference_path(frame)
+        draw_obstacles(frame)
 
         #Get car center
         x, y, img = carcentre(car_contour, contour, draw_flag=1, img=frame)
