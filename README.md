@@ -27,6 +27,10 @@ The controller generates safe steering and velocity commands while maintaining s
 - Lookahead-based vehicle model
 - Adjustable safety aggressiveness parameters
 - Autonomous racing simulation
+- Multi-agent racing scenarios
+- Reinforcement learning integration
+- Real-world vehicle integration
+- Dynamic obstacle prediction
 
 ---
 
@@ -68,17 +72,9 @@ where:
 
 ## Results
 
-### Path Tracking
+### Path Tracking and Obstacle Avoidance
 
-![tracking](media/tracking.png)
-
-### Obstacle Avoidance
-
-![avoidance](media/avoidance.png)
-
-### CBF vs CBF + Lookahead
-
-![comparison](media/comparison.png)
+![tracking](media/lookhaed0.5lyp.pdf)
 
 ---
 
@@ -94,25 +90,19 @@ where:
 - Quadratic Programming
 - Matplotlib
 - Shapely
-- Pure Pursuit
-- Vehicle Dynamics Modeling
 
 ---
 
 ## Repository Structure
 
 ```text
-autonomous-racing-cbf/
-│
-├── controller/
-├── simulation/
-├── results/
-├── media/
-├── main.py
-├── requirements.txt
-└── README.md
+Fig/                → Figures, plots, and paper assets
+Pack1-Pack7/        → Simulation and controller development modules
+Real1-Real3/        → Real-world vehicle experiments
+SimuPWM/            → PWM and low-level control simulations
+XIAO_ESP32C3_BT/    → ESP32 communication and embedded firmware
+car/                → Vehicle modeling and racing control modules
 ```
-
 ---
 
 ## Installation
@@ -120,8 +110,8 @@ autonomous-racing-cbf/
 Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/autonomous-racing-cbf.git
-cd autonomous-racing-cbf
+git clone https://github.com/Kanestrene/ControllerRC.git
+cd ControllerRC
 ```
 
 Install dependencies:
@@ -133,18 +123,15 @@ pip install -r requirements.txt
 Run the simulation:
 
 ```bash
-python main.py
+python simulation1.py
 ```
 
 ---
 
 ## Future Work
 
-- Real-world vehicle integration
-- Dynamic obstacle prediction
 - MPC-CBF hybrid control
-- Multi-agent racing scenarios
-- Reinforcement learning integration
+
 
 ---
 
