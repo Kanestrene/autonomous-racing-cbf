@@ -14,7 +14,16 @@ import os
 import time
 import json
 import socket
-from shared_config import OBSTACLES_M, TRACK_POINTS_M
+import re
+from pathlib import Path
+from shared_config import (
+    BARRIER_INNER_M,
+    BARRIER_OUTER_M,
+    BARRIER_ROUND_CORNER_RADIUS_M,
+    BARRIER_ROUND_CORNER_SAMPLES,
+    OBSTACLES_M,
+    TRACK_POINTS_M,
+)
 
 #Global Variables
 kernel = np.ones((3,3),np.uint8)
@@ -29,6 +38,11 @@ aux = 0 #flag for passing the goal
 f_red = 0 #flag for going out of bounds
 red = None
 click_count = 0
+edit_drag_target = None
+edited_points_dirty = False
+
+POINT_PICK_RADIUS_PX = 14
+SHARED_CONFIG_PATH = Path(__file__).with_name("shared_config.py")
 
 # Crop constants
 frame_height = 0
@@ -328,6 +342,210 @@ def draw_reference_path(img):
             2,
             cv2.LINE_AA
         )
+
+    for sx_m, sy_m in TRACK_POINTS_M:
+        sx_px, sy_px = m_to_px(sx_m, sy_m)
+        if np.isfinite(sx_px) and np.isfinite(sy_px):
+            cv2.circle(
+                img,
+                (int(round(sx_px)), int(round(sy_px))),
+                4,
+                (255, 0, 0),
+                -1,
+                cv2.LINE_AA
+            )
+
+
+def _points_by_name(points_name):
+    if points_name == "track":
+        return TRACK_POINTS_M
+    if points_name == "inner":
+        return BARRIER_INNER_M
+    if points_name == "outer":
+        return BARRIER_OUTER_M
+    return None
+
+
+def _round_edit_coord(value):
+    value = round(float(value), 2)
+    if abs(value) < 0.005:
+        value = 0.0
+    return value
+
+
+def _find_nearest_control_point(x_px, y_px):
+    if REF_PX_ORIGIN is None or PIXEL_TO_METER is None:
+        return None
+
+    best = None
+    best_dist = float("inf")
+
+    for points_name, points in (
+        ("track", TRACK_POINTS_M),
+        ("inner", BARRIER_INNER_M),
+        ("outer", BARRIER_OUTER_M),
+    ):
+        for idx, (x_m, y_m) in enumerate(points):
+            px, py = m_to_px(x_m, y_m)
+            if not (np.isfinite(px) and np.isfinite(py)):
+                continue
+
+            dist = float(np.hypot(float(x_px) - px, float(y_px) - py))
+            if dist < best_dist:
+                best_dist = dist
+                best = (points_name, idx)
+
+    if best_dist <= POINT_PICK_RADIUS_PX:
+        return best
+
+    return None
+
+
+def _move_selected_control_point(x_px, y_px):
+    global edited_points_dirty
+
+    if edit_drag_target is None:
+        return
+
+    if y_px < 0 or y_px >= frame_height or x_px < 0 or x_px >= frame_width:
+        return
+
+    x_m, y_m = px_to_m(x_px, y_px)
+    if not (np.isfinite(x_m) and np.isfinite(y_m)):
+        return
+
+    points_name, idx = edit_drag_target
+    points = _points_by_name(points_name)
+    if points is None:
+        return
+
+    points[idx] = (
+        _round_edit_coord(x_m),
+        _round_edit_coord(y_m),
+    )
+    edited_points_dirty = True
+
+
+def edit_control_points(event, x, y, flags, param):
+    global edit_drag_target
+
+    if event == cv2.EVENT_LBUTTONDOWN:
+        edit_drag_target = _find_nearest_control_point(x, y)
+        _move_selected_control_point(x, y)
+    elif event == cv2.EVENT_MOUSEMOVE and edit_drag_target is not None:
+        _move_selected_control_point(x, y)
+    elif event == cv2.EVENT_LBUTTONUP:
+        _move_selected_control_point(x, y)
+        edit_drag_target = None
+
+
+def _format_points_block(points):
+    lines = ["["]
+    for x_m, y_m in points:
+        lines.append(f"    ({float(x_m):.2f}, {float(y_m):.2f}),")
+    lines.append("]")
+    return "\n".join(lines)
+
+
+def _replace_points_block(text, name, points, followed_by=None):
+    replacement = f"{name} = {_format_points_block(points)}"
+    pattern = rf"{name}\s*=\s*\[\n.*?\n\]"
+    if followed_by is not None:
+        pattern += rf"(?=\s*{followed_by})"
+    text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+    if count != 1:
+        raise RuntimeError(f"Nao encontrei o bloco {name} em {SHARED_CONFIG_PATH.name}.")
+    return text
+
+
+def _replace_points_block_before_marker(text, name, points, marker):
+    marker_idx = text.find(marker)
+    if marker_idx < 0:
+        raise RuntimeError(f"Nao encontrei o marcador {marker} em {SHARED_CONFIG_PATH.name}.")
+
+    block_start = text.rfind(name, 0, marker_idx)
+    if block_start < 0:
+        raise RuntimeError(f"Nao encontrei o bloco ativo {name} em {SHARED_CONFIG_PATH.name}.")
+
+    block_end = text.find("\n]", block_start, marker_idx)
+    if block_end < 0:
+        raise RuntimeError(f"Nao encontrei o fim do bloco ativo {name} em {SHARED_CONFIG_PATH.name}.")
+    block_end += len("\n]")
+
+    replacement = f"{name} = {_format_points_block(points)}"
+    return text[:block_start] + replacement + text[block_end:]
+
+
+def save_control_points_to_shared_config():
+    global edited_points_dirty
+
+    text = SHARED_CONFIG_PATH.read_text(encoding="utf-8")
+    text = _replace_points_block_before_marker(
+        text,
+        "TRACK_POINTS_M",
+        TRACK_POINTS_M,
+        marker="BARRIER_ROUND_CORNER_RADIUS_M",
+    )
+    text = _replace_points_block(text, "BARRIER_INNER_M", BARRIER_INNER_M)
+    text = _replace_points_block(text, "BARRIER_OUTER_M", BARRIER_OUTER_M)
+    SHARED_CONFIG_PATH.write_text(text, encoding="utf-8")
+    edited_points_dirty = False
+    print(f"Pontos guardados em {SHARED_CONFIG_PATH.name}.")
+
+
+def handle_tracking_key(key):
+    if key in (ord("q"), ord("Q")):
+        if edited_points_dirty:
+            print("Tens alteracoes por guardar. Carrega em S para guardar, ou Esc para sair sem guardar.")
+            return False
+        return True
+
+    if key == 27:
+        return True
+
+    if key in (ord("s"), ord("S")):
+        save_control_points_to_shared_config()
+
+    return False
+
+
+def draw_barrier(img, barrier_points_m, color):
+    if REF_PX_ORIGIN is None or PIXEL_TO_METER is None:
+        return
+
+    rounded_points_m = build_rounded_polyline(
+        list(barrier_points_m),
+        corner_radius=BARRIER_ROUND_CORNER_RADIUS_M,
+        corner_samples=BARRIER_ROUND_CORNER_SAMPLES,
+        closed=True
+    )
+
+    barrier_points_px = []
+    for sx_m, sy_m in rounded_points_m:
+        sx_px, sy_px = m_to_px(sx_m, sy_m)
+        if np.isfinite(sx_px) and np.isfinite(sy_px):
+            barrier_points_px.append([int(round(sx_px)), int(round(sy_px))])
+
+    if len(barrier_points_px) >= 2:
+        points = np.array(barrier_points_px, dtype=np.int32)
+        cv2.polylines(img, [points], True, color, 2, cv2.LINE_AA)
+
+    for sx_m, sy_m in barrier_points_m:
+        sx_px, sy_px = m_to_px(sx_m, sy_m)
+        if np.isfinite(sx_px) and np.isfinite(sy_px):
+            cv2.circle(
+                img,
+                (int(round(sx_px)), int(round(sy_px))),
+                3,
+                color,
+                -1,
+                cv2.LINE_AA
+            )
+
+
+def draw_barriers(img):
+    draw_barrier(img, BARRIER_INNER_M, (0, 255, 0))
+    draw_barrier(img, BARRIER_OUTER_M, (0, 0, 255))
 
 
 def draw_obstacles(img):
@@ -666,7 +884,7 @@ def carcentre(car_contour, track_contour, draw_flag=0, img=None):
 def show(name, frame):
 
     cv2.imshow(name, frame)
-    cv2.waitKey(1)
+    return cv2.waitKey(1) & 0xFF
 
 #check if the function worked
 def check(cap):
@@ -751,6 +969,10 @@ def main():
     if red is None:
         print("Warning: Red overlay not loaded. Skipping overlay functionality.")
 
+    cv2.namedWindow("Tracking")
+    cv2.setMouseCallback("Tracking", edit_control_points)
+    print("Editor: arrasta os pontos do caminho/barreiras na janela Tracking e carrega em S para guardar.")
+
     #Tracking the car
     while True:
 
@@ -764,19 +986,25 @@ def main():
         cv2.imshow("Live", frame)
 
         key = cv2.waitKey(10) & 0xFF
-        if key == ord('q'):
+        if handle_tracking_key(key):
             break
 
         #Get car contour
         car_contour = carcontour(frame)
+
+        display_frame = frame.copy()
+        draw_reference_path(display_frame)
+        draw_barriers(display_frame)
+        draw_obstacles(display_frame)
+
         if car_contour is None:
+            key = show("Tracking", display_frame)
+            if handle_tracking_key(key):
+                break
             continue
 
-        draw_reference_path(frame)
-        draw_obstacles(frame)
-
         #Get car center
-        x, y, img = carcentre(car_contour, contour, draw_flag=1, img=frame)
+        x, y, img = carcentre(car_contour, contour, draw_flag=1, img=display_frame)
 
         if img is not None:
             x_m, y_m = px_to_m(x, y)
@@ -797,7 +1025,9 @@ def main():
 
             #Display border and lap info
             img = apply_border(img, phrases)
-            show("Tracking", img)
+            key = show("Tracking", img)
+            if handle_tracking_key(key):
+                break
 
     cap.release()
     sock.close()
