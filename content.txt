@@ -2,6 +2,8 @@ env\Scripts\activate
 
 Pack1 --> Controlo com Pure Pursuit, variáveis de controlo v e w
 
+Pack1.1 --> Controlo com Pure Pursuit, variáveis de controlo v e w sem Lookhaed
+
 Pack2 --> Controlo com Lyapunov, variáveis de controlo v e w
 
 Pack3 --> Controlo com Pure Pursuit, variáveis de controlo a e alfa
@@ -23,3 +25,7 @@ Pack7 --> Treino de aprendizagem com p e q (Função custo D com score)
 Pack8 --> Treino de aprendizagem com p e q (Função custo D min de b)
 
 Real4 --> Controlo com CLF u=(v,w) (igual o Real2 mas a tentar emitar a pista das simulações)
+
+Real5 --> Copia Real4 com obstaculos da simulação
+
+Real6 --> Copia Real1 com obstaculos da simulação

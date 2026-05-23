@@ -363,7 +363,7 @@ async def run_real():
                 obstacles=obstacles,
                 ellipse_ab=(a_ell, b_ell),
                 margin=margin,
-                lookahead_l=0.2,
+                lookahead_l=0.15,
                 alpha=2.5,
                 W=(2500000000.0, 1.0),
                 v_bounds=(0.0, 2.0),

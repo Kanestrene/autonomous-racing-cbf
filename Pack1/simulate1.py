@@ -232,7 +232,7 @@ def simulate():
             ellipse_ab=(a_ell, b_ell),
             margin=margin,
             lookahead_l=0.01,
-            alpha=2,
+            alpha=4,
             W=(25000.0, 1.0),
             v_bounds=(0.0, 2),
             w_bounds=(-w_max, w_max),
@@ -242,7 +242,7 @@ def simulate():
         w_max_speed = abs(v_safe) * kappa_max
         w_safe = np.clip(w_safe, -w_max_speed, w_max_speed)
 
-        """
+        
         delta_cmd = omega_to_delta(w_safe, v_safe, L, v_min=0.2)
         delta_cmd = np.clip(delta_cmd, -delta_max, delta_max)
 
@@ -251,7 +251,7 @@ def simulate():
         x += v_safe * np.cos(yaw) * dt
         y += v_safe * np.sin(yaw) * dt
         yaw = wrap_to_pi(yaw + (v_safe / L) * np.tan(delta) * dt)
-        """
+        
 
         x += v_safe * np.cos(yaw) * dt
         y += v_safe * np.sin(yaw) * dt

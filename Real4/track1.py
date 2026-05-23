@@ -366,6 +366,10 @@ def _points_by_name(points_name):
     return None
 
 
+def _obstacle_center(obstacle):
+    return float(obstacle["x"]), float(obstacle["y"])
+
+
 def _round_edit_coord(value):
     value = round(float(value), 2)
     if abs(value) < 0.005:
@@ -395,6 +399,17 @@ def _find_nearest_control_point(x_px, y_px):
                 best_dist = dist
                 best = (points_name, idx)
 
+    for idx, obstacle in enumerate(OBSTACLES_M):
+        ox_m, oy_m = _obstacle_center(obstacle)
+        px, py = m_to_px(ox_m, oy_m)
+        if not (np.isfinite(px) and np.isfinite(py)):
+            continue
+
+        dist = float(np.hypot(float(x_px) - px, float(y_px) - py))
+        if dist < best_dist:
+            best_dist = dist
+            best = ("obstacle", idx)
+
     if best_dist <= POINT_PICK_RADIUS_PX:
         return best
 
@@ -415,6 +430,12 @@ def _move_selected_control_point(x_px, y_px):
         return
 
     points_name, idx = edit_drag_target
+    if points_name == "obstacle":
+        OBSTACLES_M[idx]["x"] = _round_edit_coord(x_m)
+        OBSTACLES_M[idx]["y"] = _round_edit_coord(y_m)
+        edited_points_dirty = True
+        return
+
     points = _points_by_name(points_name)
     if points is None:
         return
@@ -443,6 +464,18 @@ def _format_points_block(points):
     lines = ["["]
     for x_m, y_m in points:
         lines.append(f"    ({float(x_m):.2f}, {float(y_m):.2f}),")
+    lines.append("]")
+    return "\n".join(lines)
+
+
+def _format_obstacles_block(obstacles):
+    lines = ["["]
+    for obstacle in obstacles:
+        lines.append(
+            f"    {{\"x\": {float(obstacle['x']):.2f}, "
+            f"\"y\": {float(obstacle['y']):.2f}, "
+            f"\"r\": {float(obstacle['r']):.2f}}},"
+        )
     lines.append("]")
     return "\n".join(lines)
 
@@ -476,6 +509,20 @@ def _replace_points_block_before_marker(text, name, points, marker):
     return text[:block_start] + replacement + text[block_end:]
 
 
+def _replace_last_list_block(text, name, replacement_body):
+    block_start = text.rfind(name)
+    if block_start < 0:
+        raise RuntimeError(f"Nao encontrei o bloco {name} em {SHARED_CONFIG_PATH.name}.")
+
+    block_end = text.find("\n]", block_start)
+    if block_end < 0:
+        raise RuntimeError(f"Nao encontrei o fim do bloco {name} em {SHARED_CONFIG_PATH.name}.")
+    block_end += len("\n]")
+
+    replacement = f"{name} = {replacement_body}"
+    return text[:block_start] + replacement + text[block_end:]
+
+
 def save_control_points_to_shared_config():
     global edited_points_dirty
 
@@ -488,6 +535,11 @@ def save_control_points_to_shared_config():
     )
     text = _replace_points_block(text, "BARRIER_INNER_M", BARRIER_INNER_M)
     text = _replace_points_block(text, "BARRIER_OUTER_M", BARRIER_OUTER_M)
+    text = _replace_last_list_block(
+        text,
+        "OBSTACLES_M",
+        _format_obstacles_block(OBSTACLES_M),
+    )
     SHARED_CONFIG_PATH.write_text(text, encoding="utf-8")
     edited_points_dirty = False
     print(f"Pontos guardados em {SHARED_CONFIG_PATH.name}.")
@@ -567,7 +619,7 @@ def draw_obstacles(img):
 
         center = (int(round(ox_px)), int(round(oy_px)))
         cv2.circle(img, center, radius_px, (0, 140, 255), 2, cv2.LINE_AA)
-        cv2.circle(img, center, 2, (0, 140, 255), -1, cv2.LINE_AA)
+        cv2.circle(img, center, 4, (0, 140, 255), -1, cv2.LINE_AA)
 
 
 def build_udp_payload(frame_counter, x_px, y_px, x_m, y_m):
@@ -971,7 +1023,7 @@ def main():
 
     cv2.namedWindow("Tracking")
     cv2.setMouseCallback("Tracking", edit_control_points)
-    print("Editor: arrasta os pontos do caminho/barreiras na janela Tracking e carrega em S para guardar.")
+    print("Editor: arrasta pontos do caminho, barreiras ou obstaculos na janela Tracking e carrega em S para guardar.")
 
     #Tracking the car
     while True:
