@@ -17,6 +17,9 @@ from controller import (
 def simulate():
     script_dir = Path(__file__).resolve().parent
     pdf_path = script_dir / "simulate1_volta_completa.pdf"
+    linear_speed_pdf_path = script_dir / "simulate1_velocidade_linear_pp_qp.pdf"
+    angular_speed_pdf_path = script_dir / "simulate1_velocidade_angular_pp_qp.pdf"
+    delta_pdf_path = script_dir / "simulate1_delta_controller_qp.pdf"
 
     waypoints = [
         (3.0, 3.0),
@@ -73,8 +76,8 @@ def simulate():
         (12.0, 2.0),
         (10.8, 2.0),
         (9.6, 2.0),
-        (8.4, 4.0),
-        (7.2, 4.0),
+        (8.4, 2.0),
+        (7.2, 2.0),
         (6.0, 2.0),
         (4.0, 2.5),
         (3.0, 3.0),
@@ -101,11 +104,14 @@ def simulate():
         ox = x_path + side * offset * nx
         oy = y_path + side * offset * ny
 
+        
         obstacles.append({
             "x": ox,
             "y": oy,
             "r": 0.35,
         })
+        
+          
 
     x, y, yaw, v = 2, 6, np.deg2rad(90), 0.0
 
@@ -123,8 +129,10 @@ def simulate():
     a_ell, b_ell = 0.30, 0.20
     margin = 0.01
 
-    last_near = 0
+    last_near = int(np.argmin((px - x) ** 2 + (py - y) ** 2))
     hx, hy, ctes = [], [], []
+    v_pp_hist, v_qp_hist = [], []
+    delta_controller_hist, delta_qp_hist = [], []
     lap_progress_idx = 0.0
     prev_near_idx = None
     stop_requested = False
@@ -155,11 +163,11 @@ def simulate():
         ax.clear()
         ax.set_facecolor("white")
 
-        ax.plot(px, py, "--", label="Spline (referencia)")
-        ax.plot(hx, hy, "-", label="Trajetoria robo (PP + CBF)")
+        ax.plot(px, py, "--", label="Reference spline")
+        ax.plot(hx, hy, "-", label="Robot trajectory (PP + CBF)")
 
-        ax.plot(inner_x, inner_y, "-", color="green", linewidth=2, label="Barreira interna")
-        ax.plot(outer_x, outer_y, "-", color="green", linewidth=2, label="Barreira externa")
+        ax.plot(inner_x, inner_y, "-", color="green", linewidth=2, label="Inner barrier")
+        ax.plot(outer_x, outer_y, "-", color="green", linewidth=2, label="Outer barrier")
 
         for obs in obstacles:
             ax.add_patch(Circle((obs["x"], obs["y"]), obs["r"], fill=False))
@@ -182,7 +190,7 @@ def simulate():
         )
         ax.add_patch(ell_safe)
 
-        ax.plot(x, y, "o", label="Robo")
+        ax.plot(x, y, "o", label="Robot")
         ax.arrow(x, y, 0.4 * np.cos(yaw), 0.4 * np.sin(yaw), head_width=0.15)
 
         ax.set_aspect("equal", "box")
@@ -199,6 +207,41 @@ def simulate():
             )
             ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5))
         plt.pause(0.001)
+
+    def show_velocity_plots():
+        if not v_pp_hist:
+            return
+
+        t = np.arange(len(v_pp_hist)) * dt
+
+        fig_v, ax_v = plt.subplots()
+        ax_v.plot(t, v_pp_hist, label="Controller")
+        ax_v.plot(t, v_qp_hist, label="QP")
+        ax_v.set_title("Linear velocity: Controller vs QP")
+        ax_v.set_xlabel("Time [s]")
+        ax_v.set_ylabel("v [m/s]")
+        ax_v.grid(True)
+        ax_v.legend()
+        fig_v.tight_layout()
+        fig_v.savefig(linear_speed_pdf_path, format="pdf", bbox_inches="tight")
+
+        fig_delta, ax_delta = plt.subplots()
+        ax_delta.plot(t, delta_controller_hist, label="Controller")
+        ax_delta.plot(t, delta_qp_hist, label="QP")
+        ax_delta.set_title("Steering angle: Controller vs QP")
+        ax_delta.set_xlabel("Time [s]")
+        ax_delta.set_ylabel("delta [rad]")
+        ax_delta.grid(True)
+        ax_delta.legend()
+        fig_delta.tight_layout()
+        fig_delta.savefig(delta_pdf_path, format="pdf", bbox_inches="tight")
+        fig_delta.savefig(angular_speed_pdf_path, format="pdf", bbox_inches="tight")
+
+        print(
+            "Plots saved to: "
+            f"{linear_speed_pdf_path} and {delta_pdf_path}"
+        )
+        plt.show()
 
     for k in range(steps):
         Ld = L0 + kv * abs(v)
@@ -221,6 +264,10 @@ def simulate():
             prev_near_idx = last_near
 
         w_cmd = np.clip(w_cmd, -w_max, w_max)
+        #w_cmd = 0.0
+        delta_controller = omega_to_delta(w_cmd, v_cmd, L, v_min=0.2)
+        delta_controller = np.clip(delta_controller, -delta_max, delta_max)
+        w_cmd = (v_cmd / L) * np.tan(delta_controller)
 
         dv = np.clip(v_cmd - v, -a_max * dt, a_max * dt)
         v = v + dv
@@ -231,7 +278,7 @@ def simulate():
             obstacles=obstacles,
             ellipse_ab=(a_ell, b_ell),
             margin=margin,
-            lookahead_l=0.01,
+            lookahead_l=0.0,
             alpha=4,
             W=(25000.0, 1.0),
             v_bounds=(0.0, 2),
@@ -242,20 +289,20 @@ def simulate():
         w_max_speed = abs(v_safe) * kappa_max
         w_safe = np.clip(w_safe, -w_max_speed, w_max_speed)
 
+        v_pp_hist.append(v_cmd)
+        v_qp_hist.append(v_safe)
+
         
         delta_cmd = omega_to_delta(w_safe, v_safe, L, v_min=0.2)
         delta_cmd = np.clip(delta_cmd, -delta_max, delta_max)
 
-        delta = rate_limit(delta_cmd, delta, du_max=delta_rate_max * dt)
+        #delta = rate_limit(delta_cmd, delta, du_max=delta_rate_max * dt)
+        delta_controller_hist.append(delta_controller)
+        delta_qp_hist.append(delta_cmd)
 
         x += v_safe * np.cos(yaw) * dt
         y += v_safe * np.sin(yaw) * dt
         yaw = wrap_to_pi(yaw + (v_safe / L) * np.tan(delta) * dt)
-        
-
-        x += v_safe * np.cos(yaw) * dt
-        y += v_safe * np.sin(yaw) * dt
-        yaw = wrap_to_pi(yaw + w_safe * dt)
 
         hx.append(x)
         hy.append(y)
@@ -269,28 +316,25 @@ def simulate():
         if stop_requested:
             draw_frame(Ld, v_safe, w_safe, cte, show_labels=False)
             fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
-            print(f"Simulacao encerrada por Enter. Figura guardada em: {pdf_path}")
+            print(f"Simulation stopped by Enter. Figure saved to: {pdf_path}")
             plt.ioff()
             plt.close(fig)
+            show_velocity_plots()
             return pdf_path
 
         if lap_completed:
             draw_frame(Ld, v_safe, w_safe, cte, show_labels=False)
             fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
-            print(f"Volta completa. Figura guardada em: {pdf_path}")
+            print(f"Lap completed. Figure saved to: {pdf_path}")
             plt.ioff()
             plt.close(fig)
+            show_velocity_plots()
             return pdf_path
 
     plt.ioff()
-    print("A simulacao terminou por tempo maximo sem completar uma volta.")
-
-    fig2, ax2 = plt.subplots()
-    ax2.plot(ctes)
-    ax2.set_title("Erro lateral (aprox) - Pure Pursuit")
-    ax2.set_xlabel("Passo")
-    ax2.set_ylabel("cte~ [m]")
-    plt.show()
+    plt.close(fig)
+    print("Simulation reached the time limit without completing a lap.")
+    show_velocity_plots()
 
 
 if __name__ == "__main__":

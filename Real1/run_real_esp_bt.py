@@ -6,7 +6,12 @@ import json
 import asyncio
 from bleak import BleakClient, BleakScanner
 
-from shared_config import OBSTACLES_M, TRACK_POINTS_M
+from shared_config import (
+    OBSTACLES_M,
+    ROBOT_ELLIPSE_A_M,
+    ROBOT_ELLIPSE_B_M,
+    TRACK_POINTS_M,
+)
 
 from controller import (
     build_spline_path,
@@ -308,8 +313,8 @@ async def run_real():
     v_max = 0.47
     a_max = 2.0
 
-    a_ell, b_ell = 0.03, 0.03
-    margin = 0.001
+    a_ell, b_ell = ROBOT_ELLIPSE_A_M, ROBOT_ELLIPSE_B_M
+    margin = 0.003
 
     last_near = 0
 
@@ -363,8 +368,8 @@ async def run_real():
                 obstacles=obstacles,
                 ellipse_ab=(a_ell, b_ell),
                 margin=margin,
-                lookahead_l=0.15,
-                alpha=2.5,
+                lookahead_l=0.25,
+                alpha=2.3,
                 W=(2500000000.0, 1.0),
                 v_bounds=(0.0, 2.0),
                 w_bounds=(-w_max, w_max),

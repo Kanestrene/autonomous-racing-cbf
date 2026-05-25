@@ -39,7 +39,7 @@ def cbf_qp_filter(u_nom, robot_state, obstacles,
         barrier_outer=outer,
         ellipse_ab=ellipse_ab,
         margin=margin,
-        lookahead_l=0.1,
+        lookahead_l=0.05,
         alpha=alpha,
         max_segments=10
     )
@@ -55,13 +55,17 @@ def cbf_qp_filter(u_nom, robot_state, obstacles,
     ])
     h_box = np.array([vmax, -vmin, wmax, -wmin], dtype=float)
 
-    # juntar tudo
-    if G_obs.size == 0:
-        G = G_box
-        h = h_box
-    else:
-        G = np.vstack([G_obs, G_barrier, G_box])
-        h = np.concatenate([h_obs, h_barrier, h_box])
+    # juntar tudo; as barreiras tambem contam quando nao ha obstaculos
+    G_parts = []
+    h_parts = []
+    for G_i, h_i in ((G_obs, h_obs), (G_barrier, h_barrier), (G_box, h_box)):
+        if G_i.size == 0:
+            continue
+        G_parts.append(G_i)
+        h_parts.append(h_i)
+
+    G = np.vstack(G_parts)
+    h = np.concatenate(h_parts)
 
     # resolver QP
     u = None

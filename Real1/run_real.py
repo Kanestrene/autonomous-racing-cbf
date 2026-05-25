@@ -3,7 +3,12 @@ import numpy as np
 import qp
 import socket
 import json
-from shared_config import OBSTACLES_M, TRACK_POINTS_M
+from shared_config import (
+    OBSTACLES_M,
+    ROBOT_ELLIPSE_A_M,
+    ROBOT_ELLIPSE_B_M,
+    TRACK_POINTS_M,
+)
 
 from controller import (
     build_spline_path,
@@ -240,7 +245,7 @@ def run_real():
     #w_max = 2.5
     a_max = 2.0
 
-    a_ell, b_ell = 0.03, 0.03
+    a_ell, b_ell = ROBOT_ELLIPSE_A_M, ROBOT_ELLIPSE_B_M
     margin = 0.001
 
     last_near = 0

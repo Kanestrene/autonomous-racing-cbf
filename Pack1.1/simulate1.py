@@ -17,6 +17,9 @@ from controller import (
 def simulate():
     script_dir = Path(__file__).resolve().parent
     pdf_path = script_dir / "simulate1_volta_completa.pdf"
+    linear_speed_pdf_path = script_dir / "simulate1_velocidade_linear_pp_qp.pdf"
+    angular_speed_pdf_path = script_dir / "simulate1_velocidade_angular_pp_qp.pdf"
+    cte_pdf_path = script_dir / "simulate1_erro_lateral.pdf"
 
     waypoints = [
         (3.0, 3.0),
@@ -127,6 +130,8 @@ def simulate():
 
     last_near = 0
     hx, hy, ctes = [], [], []
+    v_pp_hist, v_qp_hist = [], []
+    w_pp_hist, w_qp_hist = [], []
     lap_progress_idx = 0.0
     prev_near_idx = None
     stop_requested = False
@@ -202,6 +207,51 @@ def simulate():
             ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5))
         plt.pause(0.001)
 
+    def show_final_plots():
+        saved_paths = []
+
+        if v_pp_hist:
+            t = np.arange(len(v_pp_hist)) * dt
+
+            fig_v, ax_v = plt.subplots()
+            ax_v.plot(t, v_pp_hist, label="PP")
+            ax_v.plot(t, v_qp_hist, label="QP")
+            ax_v.set_title("Velocidade linear: PP vs QP")
+            ax_v.set_xlabel("Tempo [s]")
+            ax_v.set_ylabel("v [m/s]")
+            ax_v.grid(True)
+            ax_v.legend()
+            fig_v.tight_layout()
+            fig_v.savefig(linear_speed_pdf_path, format="pdf", bbox_inches="tight")
+            saved_paths.append(linear_speed_pdf_path)
+
+            fig_w, ax_w = plt.subplots()
+            ax_w.plot(t, w_pp_hist, label="PP")
+            ax_w.plot(t, w_qp_hist, label="QP")
+            ax_w.set_title("Velocidade angular: PP vs QP")
+            ax_w.set_xlabel("Tempo [s]")
+            ax_w.set_ylabel("w [rad/s]")
+            ax_w.grid(True)
+            ax_w.legend()
+            fig_w.tight_layout()
+            fig_w.savefig(angular_speed_pdf_path, format="pdf", bbox_inches="tight")
+            saved_paths.append(angular_speed_pdf_path)
+
+        if ctes:
+            fig_cte, ax_cte = plt.subplots()
+            ax_cte.plot(ctes)
+            ax_cte.set_title("Erro lateral (aprox) - Pure Pursuit")
+            ax_cte.set_xlabel("Passo")
+            ax_cte.set_ylabel("cte~ [m]")
+            ax_cte.grid(True)
+            fig_cte.tight_layout()
+            fig_cte.savefig(cte_pdf_path, format="pdf", bbox_inches="tight")
+            saved_paths.append(cte_pdf_path)
+
+        if saved_paths:
+            print("Graficos guardados em: " + ", ".join(str(path) for path in saved_paths))
+        plt.show()
+
     for k in range(steps):
         Ld = L0 + kv * abs(v)
 
@@ -247,6 +297,11 @@ def simulate():
         )
         v_next = np.clip(v + nu_safe * dt, 0.0, 2.0)
 
+        v_pp_hist.append(v_cmd)
+        v_qp_hist.append(v_next)
+        w_pp_hist.append(w_cmd)
+        w_qp_hist.append(w_safe)
+
         if abs(v_next) > 1e-6:
             delta_cmd = np.arctan((L * w_safe) / v_next)
         else:
@@ -274,6 +329,7 @@ def simulate():
             print(f"Simulacao encerrada por Enter. Figura guardada em: {pdf_path}")
             plt.ioff()
             plt.close(fig)
+            show_final_plots()
             return pdf_path
 
         if lap_completed:
@@ -282,17 +338,13 @@ def simulate():
             print(f"Volta completa. Figura guardada em: {pdf_path}")
             plt.ioff()
             plt.close(fig)
+            show_final_plots()
             return pdf_path
 
     plt.ioff()
+    plt.close(fig)
     print("A simulacao terminou por tempo maximo sem completar uma volta.")
-
-    fig2, ax2 = plt.subplots()
-    ax2.plot(ctes)
-    ax2.set_title("Erro lateral (aprox) - Pure Pursuit")
-    ax2.set_xlabel("Passo")
-    ax2.set_ylabel("cte~ [m]")
-    plt.show()
+    show_final_plots()
 
 
 if __name__ == "__main__":

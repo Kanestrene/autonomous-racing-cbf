@@ -131,7 +131,7 @@ def cbf_qp_filter(u_nom, robot_state, obstacles,
         barrier_outer=outer,
         ellipse_ab=ellipse_ab,
         margin=margin,
-        lookahead_l=0.05,
+        lookahead_l=0.01,
         alpha=alpha,
         max_segments=10
     )

@@ -2,7 +2,7 @@ env\Scripts\activate
 
 Pack1 --> Controlo com Pure Pursuit, variáveis de controlo v e w
 
-Pack1.1 --> Controlo com Pure Pursuit, variáveis de controlo v e w sem Lookhaed
+Pack1.1 --> Controlo com Pure Pursuit, variáveis de controlo v e w com iHOCBF
 
 Pack2 --> Controlo com Lyapunov, variáveis de controlo v e w
 
@@ -11,6 +11,8 @@ Pack3 --> Controlo com Pure Pursuit, variáveis de controlo a e alfa
 Pack4 --> Controlo com Lyapunov, variáveis de controlo a e alfa
 
 Real1 --> Controlo com PP u=(v,w) 
+
+Real1.1 --> Cópia do Real1 com iHOCBF 
 
 Real2 --> Controlo com CLF u=(v,w) 
 

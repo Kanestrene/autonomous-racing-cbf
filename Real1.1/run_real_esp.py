@@ -3,12 +3,7 @@ import numpy as np
 import qp
 import socket
 import json
-from shared_config import (
-    OBSTACLES_M,
-    ROBOT_ELLIPSE_A_M,
-    ROBOT_ELLIPSE_B_M,
-    TRACK_POINTS_M,
-)
+from shared_config import OBSTACLES_M, TRACK_POINTS_M
 
 from controller import (
     build_spline_path,
@@ -273,7 +268,7 @@ def run_real():
     v_max = 0.47
     a_max = 2.0
 
-    a_ell, b_ell = ROBOT_ELLIPSE_A_M, ROBOT_ELLIPSE_B_M
+    a_ell, b_ell = 0.03, 0.03
     margin = 0.001
 
     last_near = 0
@@ -318,25 +313,29 @@ def run_real():
             w_max = abs(v_cmd) * kappa_max
             w_cmd = np.clip(w_cmd, -w_max, w_max)
 
-            # limitar aceleração
-            #dv = np.clip(v_cmd - v, -a_max * dt, a_max * dt)
-            #v_cmd = v + dv
+            nu_nom = np.clip((v_cmd - v) / dt, -a_max, a_max)
 
-            # CBF
-            v_safe, w_safe = qp.cbf_qp_filter(
-                u_nom=(v_cmd, w_cmd),
-                robot_state=(x, y, yaw),
+            # CBF iHOCBF: o QP filtra aceleracao longitudinal e yaw-rate.
+            nu_safe, w_safe = qp.cbf_qp_filter(
+                u_nom=(nu_nom, w_cmd),
+                robot_state=(x, y, yaw, v),
                 obstacles=obstacles,
                 ellipse_ab=(a_ell, b_ell),
                 margin=margin,
                 lookahead_l=0.1,
                 alpha=2.5,
+                dt=dt,
                 W=(250.0, 1.0),
-                v_bounds=(0.0, 2.0),
+                nu_bounds=(-a_max, a_max),
+                v_bounds=(0.0, v_max),
                 w_bounds=(-w_max, w_max),
+                wheelbase=L,
+                delta_bounds=(-delta_max, delta_max),
+                delta_current=delta,
+                delta_rate_max=delta_rate_max,
             )
 
-            v_safe = np.clip(v_safe, -v_max, v_max)
+            v_safe = np.clip(v + nu_safe * dt, 0.0, v_max)
 
             kappa_max = np.tan(delta_max) / L
             w_max_speed = abs(v_safe) * kappa_max

@@ -21,11 +21,7 @@ from shared_config import (
     BARRIER_OUTER_M,
     BARRIER_ROUND_CORNER_RADIUS_M,
     BARRIER_ROUND_CORNER_SAMPLES,
-    BLUE_HSV_LOWER,
-    BLUE_HSV_UPPER,
     OBSTACLES_M,
-    ROBOT_ELLIPSE_A_M,
-    ROBOT_ELLIPSE_B_M,
     TRACK_POINTS_M,
 )
 
@@ -64,8 +60,11 @@ TRACK_TRAIL_MIN_STEP_PX = 6.0
 track_trail = []
 ROUND_CORNER_RADIUS_M = 0.2
 ROUND_CORNER_SAMPLES = 24
-RAW_SPEED_UPDATE_CYCLES = 1
-RAW_THETA_MIN_UPDATE_M = 0.03
+RAW_SPEED_UPDATE_CYCLES = 3
+RAW_SPEED_FILTER_ALPHA = 0.2
+RAW_SPEED_MAX_M_S = 1.5
+RAW_SPEED_DEADBAND_M_S = 0.03
+RAW_THETA_MIN_UPDATE_M = 0.02
 
 raw_theta_rad = 3.14
 raw_speed_m_s = 0.0
@@ -96,8 +95,8 @@ rectangle_width = 0
 #LOWER_BLUE = np.array([100, 100, 50])
 #UPPER_BLUE = np.array([140, 255, 255])
 
-LOWER_BLUE = np.array(BLUE_HSV_LOWER, dtype=np.uint8)
-UPPER_BLUE = np.array(BLUE_HSV_UPPER, dtype=np.uint8)
+LOWER_BLUE = np.array([70, 52, 86])
+UPPER_BLUE = np.array([105, 161, 196])
 
 #Text constants
 font = cv2.FONT_HERSHEY_SIMPLEX #font
@@ -196,7 +195,17 @@ def update_raw_theta(x_m, y_m, t_now):
             dx_speed = x_m - raw_speed_anchor_pos_m[0]
             dy_speed = y_m - raw_speed_anchor_pos_m[1]
             dt_speed = max(1e-6, float(t_now - raw_speed_anchor_t))
-            raw_speed_m_s = float(np.hypot(dx_speed, dy_speed)) / dt_speed
+            v_raw = float(np.hypot(dx_speed, dy_speed)) / dt_speed
+
+            if np.isfinite(v_raw) and v_raw <= RAW_SPEED_MAX_M_S:
+                if v_raw < RAW_SPEED_DEADBAND_M_S:
+                    v_raw = 0.0
+
+                raw_speed_m_s += RAW_SPEED_FILTER_ALPHA * (v_raw - raw_speed_m_s)
+
+                if raw_speed_m_s < RAW_SPEED_DEADBAND_M_S:
+                    raw_speed_m_s = 0.0
+
             raw_speed_anchor_pos_m = (x_m, y_m)
             raw_speed_anchor_t = float(t_now)
             raw_speed_cycle_count = 0
@@ -383,7 +392,6 @@ def _find_nearest_control_point(x_px, y_px):
 
     best = None
     best_dist = float("inf")
-    px_per_meter = abs(1.0 / PIXEL_TO_METER)
 
     for points_name, points in (
         ("track", TRACK_POINTS_M),
@@ -396,23 +404,14 @@ def _find_nearest_control_point(x_px, y_px):
                 continue
 
             dist = float(np.hypot(float(x_px) - px, float(y_px) - py))
-            if dist <= POINT_PICK_RADIUS_PX and dist < best_dist:
+            if dist < best_dist:
                 best_dist = dist
                 best = (points_name, idx)
 
-    for idx, obstacle in enumerate(OBSTACLES_M):
-        ox_px, oy_px = m_to_px(float(obstacle["x"]), float(obstacle["y"]))
-        if not (np.isfinite(ox_px) and np.isfinite(oy_px)):
-            continue
+    if best_dist <= POINT_PICK_RADIUS_PX:
+        return best
 
-        radius_px = max(1, int(round(float(obstacle["r"]) * px_per_meter)))
-        pick_radius_px = max(POINT_PICK_RADIUS_PX, radius_px)
-        dist = float(np.hypot(float(x_px) - ox_px, float(y_px) - oy_px))
-        if dist <= pick_radius_px and dist < best_dist:
-            best_dist = dist
-            best = ("obstacle", idx)
-
-    return best
+    return None
 
 
 def _move_selected_control_point(x_px, y_px):
@@ -429,13 +428,6 @@ def _move_selected_control_point(x_px, y_px):
         return
 
     points_name, idx = edit_drag_target
-    if points_name == "obstacle":
-        obstacle = OBSTACLES_M[idx]
-        obstacle["x"] = _round_edit_coord(x_m)
-        obstacle["y"] = _round_edit_coord(y_m)
-        edited_points_dirty = True
-        return
-
     points = _points_by_name(points_name)
     if points is None:
         return
@@ -464,19 +456,6 @@ def _format_points_block(points):
     lines = ["["]
     for x_m, y_m in points:
         lines.append(f"    ({float(x_m):.2f}, {float(y_m):.2f}),")
-    lines.append("]")
-    return "\n".join(lines)
-
-
-def _format_obstacles_block(obstacles):
-    lines = ["["]
-    for obstacle in obstacles:
-        lines.append(
-            "    "
-            f'{{"x": {float(obstacle["x"]):.2f}, '
-            f'"y": {float(obstacle["y"]):.2f}, '
-            f'"r": {float(obstacle["r"]):.2f}}},'
-        )
     lines.append("]")
     return "\n".join(lines)
 
@@ -510,15 +489,6 @@ def _replace_points_block_before_marker(text, name, points, marker):
     return text[:block_start] + replacement + text[block_end:]
 
 
-def _replace_obstacles_block(text, name, obstacles):
-    replacement = f"{name} = {_format_obstacles_block(obstacles)}"
-    pattern = rf"{name}\s*=\s*\[\n.*?\n\]"
-    text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
-    if count != 1:
-        raise RuntimeError(f"Nao encontrei o bloco {name} em {SHARED_CONFIG_PATH.name}.")
-    return text
-
-
 def save_control_points_to_shared_config():
     global edited_points_dirty
 
@@ -531,10 +501,9 @@ def save_control_points_to_shared_config():
     )
     text = _replace_points_block(text, "BARRIER_INNER_M", BARRIER_INNER_M)
     text = _replace_points_block(text, "BARRIER_OUTER_M", BARRIER_OUTER_M)
-    text = _replace_obstacles_block(text, "OBSTACLES_M", OBSTACLES_M)
     SHARED_CONFIG_PATH.write_text(text, encoding="utf-8")
     edited_points_dirty = False
-    print(f"Pontos e obstaculos guardados em {SHARED_CONFIG_PATH.name}.")
+    print(f"Pontos guardados em {SHARED_CONFIG_PATH.name}.")
 
 
 def handle_tracking_key(key):
@@ -612,24 +581,6 @@ def draw_obstacles(img):
         center = (int(round(ox_px)), int(round(oy_px)))
         cv2.circle(img, center, radius_px, (0, 140, 255), 2, cv2.LINE_AA)
         cv2.circle(img, center, 2, (0, 140, 255), -1, cv2.LINE_AA)
-
-
-def draw_robot_ellipse(img, x_m, y_m, theta_rad, color):
-    if REF_PX_ORIGIN is None or PIXEL_TO_METER is None:
-        return
-
-    cx_px, cy_px = m_to_px(x_m, y_m)
-    if not (np.isfinite(cx_px) and np.isfinite(cy_px)):
-        return
-
-    px_per_meter = abs(1.0 / PIXEL_TO_METER)
-    axes = (
-        max(1, int(round(float(ROBOT_ELLIPSE_A_M) * px_per_meter))),
-        max(1, int(round(float(ROBOT_ELLIPSE_B_M) * px_per_meter))),
-    )
-    center = (int(round(cx_px)), int(round(cy_px)))
-    angle_deg = -float(np.degrees(theta_rad))
-    cv2.ellipse(img, center, axes, angle_deg, 0, 360, color, 2, cv2.LINE_AA)
 
 
 def build_udp_payload(frame_counter, x_px, y_px, x_m, y_m):
@@ -769,127 +720,6 @@ def limits (frame):
         
     return img, largest
 
-
-def _format_hsv_tuple(values):
-    return f"({int(values[0])}, {int(values[1])}, {int(values[2])})"
-
-
-def _upsert_config_constant(text, name, value_text, after_name):
-    replacement = f"{name} = {value_text}"
-    pattern = rf"^{name}\s*=\s*[\(\[][^\n]*[\)\]]"
-    text, count = re.subn(pattern, replacement, text, count=1, flags=re.M)
-    if count == 1:
-        return text
-
-    after_pattern = rf"^({after_name}\s*=\s*[^\n]*\n)"
-    text, count = re.subn(
-        after_pattern,
-        lambda match: match.group(1) + replacement + "\n",
-        text,
-        count=1,
-        flags=re.M,
-    )
-    if count == 1:
-        return text
-
-    return text.rstrip() + "\n\n" + replacement + "\n"
-
-
-def save_blue_hsv_to_shared_config(lower, upper):
-    text = SHARED_CONFIG_PATH.read_text(encoding="utf-8")
-    text = _upsert_config_constant(
-        text,
-        "BLUE_HSV_LOWER",
-        _format_hsv_tuple(lower),
-        after_name="ROBOT_ELLIPSE_B_M",
-    )
-    text = _upsert_config_constant(
-        text,
-        "BLUE_HSV_UPPER",
-        _format_hsv_tuple(upper),
-        after_name="BLUE_HSV_LOWER",
-    )
-    SHARED_CONFIG_PATH.write_text(text, encoding="utf-8")
-    print(f"HSV azul guardado em {SHARED_CONFIG_PATH.name}.")
-
-
-def calibrate_blue_color(cap):
-    global LOWER_BLUE, UPPER_BLUE
-
-    window_name = "Calibrar azul"
-
-    def _nothing(_value):
-        pass
-
-    cv2.namedWindow(window_name)
-    cv2.createTrackbar("H min", window_name, int(LOWER_BLUE[0]), 179, _nothing)
-    cv2.createTrackbar("H max", window_name, int(UPPER_BLUE[0]), 179, _nothing)
-    cv2.createTrackbar("S min", window_name, int(LOWER_BLUE[1]), 255, _nothing)
-    cv2.createTrackbar("S max", window_name, int(UPPER_BLUE[1]), 255, _nothing)
-    cv2.createTrackbar("V min", window_name, int(LOWER_BLUE[2]), 255, _nothing)
-    cv2.createTrackbar("V max", window_name, int(UPPER_BLUE[2]), 255, _nothing)
-
-    print("Calibracao azul: ajusta os seletores HSV ate a mascara apanhar so o carro.")
-    print("Enter/Espaco confirma os valores. Q sai.")
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            check(cap)
-
-        frame = process_frame(frame)
-        h_min = cv2.getTrackbarPos("H min", window_name)
-        h_max = cv2.getTrackbarPos("H max", window_name)
-        s_min = cv2.getTrackbarPos("S min", window_name)
-        s_max = cv2.getTrackbarPos("S max", window_name)
-        v_min = cv2.getTrackbarPos("V min", window_name)
-        v_max = cv2.getTrackbarPos("V max", window_name)
-
-        lower = np.array([
-            min(h_min, h_max),
-            min(s_min, s_max),
-            min(v_min, v_max),
-        ], dtype=np.uint8)
-        upper = np.array([
-            max(h_min, h_max),
-            max(s_min, s_max),
-            max(v_min, v_max),
-        ], dtype=np.uint8)
-
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, lower, upper)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        masked = cv2.bitwise_and(frame, frame, mask=mask)
-        preview = np.hstack((frame, masked))
-
-        cv2.putText(
-            preview,
-            "Original | Mascara HSV    Enter/Espaco: confirmar | Q: sair",
-            (10, 25),
-            font,
-            fontScale,
-            (255, 255, 255),
-            thickness,
-            cv2.LINE_AA,
-        )
-        cv2.imshow(window_name, preview)
-
-        key = cv2.waitKey(1) & 0xFF
-        if key in (ord("q"), ord("Q")):
-            cv2.destroyWindow(window_name)
-            cap.release()
-            cv2.destroyAllWindows()
-            exit()
-
-        if key in (13, 32):
-            LOWER_BLUE = lower
-            UPPER_BLUE = upper
-            save_blue_hsv_to_shared_config(LOWER_BLUE, UPPER_BLUE)
-            cv2.destroyWindow(window_name)
-            print(f"Azul calibrado: lower={LOWER_BLUE.tolist()} upper={UPPER_BLUE.tolist()}")
-            return
-
-
 #Get coordinates of the finishing line
 def set_finishing_line(event, x, y, flags, param):
 
@@ -964,8 +794,7 @@ def carcentre(car_contour, track_contour, draw_flag=0, img=None):
     x = int(M["m10"] / M["m00"])
     y = int(M["m01"] / M["m00"])
     x_m, y_m = px_to_m(x, y)
-    theta_rad = update_raw_theta(x_m, y_m, time.time())
-    theta_deg = float(np.degrees(theta_rad))
+    theta_deg = float(np.degrees(update_raw_theta(x_m, y_m, time.time())))
 
     #Check to see if centre in limits or out
     InorOut = cv2.pointPolygonTest(track_contour, (x,y), False)
@@ -989,7 +818,6 @@ def carcentre(car_contour, track_contour, draw_flag=0, img=None):
             aux = 0
             append_track_trail(x, y)
             draw_track_trail(img)
-            draw_robot_ellipse(img, x_m, y_m, theta_rad, (0, 255, 0))
             cv2.circle(img, (x,y), radius = 2, color=[0, 255, 0],
                     thickness=5)
             cv2.putText(
@@ -1026,7 +854,6 @@ def carcentre(car_contour, track_contour, draw_flag=0, img=None):
             
             append_track_trail(x, y)
             draw_track_trail(img)
-            draw_robot_ellipse(img, x_m, y_m, theta_rad, (0, 255, 255))
             cv2.circle(img, (x, y), 2, (0, 255, 255), 5)
             cv2.putText(
                 img,
@@ -1053,7 +880,6 @@ def carcentre(car_contour, track_contour, draw_flag=0, img=None):
 
             append_track_trail(x, y)
             draw_track_trail(img)
-            draw_robot_ellipse(img, x_m, y_m, theta_rad, (0, 0, 255))
             cv2.putText(
                 img,
                 f"x={x_m:.3f}m y={y_m:.3f}m th={theta_deg:.1f}deg",
@@ -1101,8 +927,6 @@ def main():
     ret, frame = cap.read()
     if not ret:
         check(cap)    
-
-    calibrate_blue_color(cap)
 
     #Get Track Limits
     while True:
@@ -1160,7 +984,7 @@ def main():
 
     cv2.namedWindow("Tracking")
     cv2.setMouseCallback("Tracking", edit_control_points)
-    print("Editor: arrasta os pontos do caminho/barreiras ou os obstaculos na janela Tracking e carrega em S para guardar.")
+    print("Editor: arrasta os pontos do caminho/barreiras na janela Tracking e carrega em S para guardar.")
 
     #Tracking the car
     while True:

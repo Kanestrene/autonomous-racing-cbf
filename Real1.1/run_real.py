@@ -3,12 +3,7 @@ import numpy as np
 import qp
 import socket
 import json
-from shared_config import (
-    OBSTACLES_M,
-    ROBOT_ELLIPSE_A_M,
-    ROBOT_ELLIPSE_B_M,
-    TRACK_POINTS_M,
-)
+from shared_config import OBSTACLES_M, TRACK_POINTS_M
 
 from controller import (
     build_spline_path,
@@ -16,6 +11,8 @@ from controller import (
     omega_to_delta,
     rate_limit,
 )
+
+from car_interface import CarController
 
 
 # ============================================================
@@ -26,13 +23,6 @@ VISION_UDP_PORT = 5005
 VISION_TRACK_ID = 2
 ROUND_CORNER_RADIUS_M = 0.08
 ROUND_CORNER_SAMPLES = 10
-
-# ============================================================
-# Comandos para a ESP32 via UDP
-# ============================================================
-#ESP32_UDP_IP = "10.80.229.141"
-ESP32_UDP_IP = "192.168.137.122"
-ESP32_UDP_PORT = 5005
 
 
 class VisionPoseReceiver:
@@ -111,34 +101,10 @@ class VisionPoseReceiver:
         if not self.has_state:
             raise RuntimeError("Sem estado da visao ainda (aguardando UDP na porta 5005).")
 
-        if not got_new_packet:
-            self.v = 0.0
-
         return self.x, self.y, self.theta, self.v
 
 
 _vision_receiver = VisionPoseReceiver()
-
-
-class Esp32CommandSender:
-    def __init__(self, target_ip=ESP32_UDP_IP, target_port=ESP32_UDP_PORT):
-        self.target = (target_ip, target_port)
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-    @staticmethod
-    def format_command(v, delta):
-        return f"V:{v:.3f} D:{delta:.3f}"
-
-    def send_cmd(self, v, delta):
-        msg = self.format_command(v, delta)
-        self.sock.sendto(msg.encode("utf-8"), self.target)
-        return msg
-
-    def stop(self):
-        try:
-            self.send_cmd(0.0, 0.0)
-        finally:
-            self.sock.close()
 
 
 def get_robot_state():
@@ -268,12 +234,13 @@ def run_real():
     dt = 0.02
     v_ref = 0.38
     L0 = 0.5
-    kv = 0.0
+    kv = 0.3
 
     v_max = 0.47
+    #w_max = 2.5
     a_max = 2.0
 
-    a_ell, b_ell = ROBOT_ELLIPSE_A_M, ROBOT_ELLIPSE_B_M
+    a_ell, b_ell = 0.03, 0.03
     margin = 0.001
 
     last_near = 0
@@ -282,13 +249,17 @@ def run_real():
     delta = 0.0
 
     # Parâmetros bicycle/servo
-    L = 0.06                         # entre-eixos (m)
-    delta_max = np.deg2rad(30)     # limite do servo
+    L = 0.04                         # entre-eixos (m)
+    delta_max = np.deg2rad(16.5)       # limite do servo
     delta_rate_max = np.deg2rad(300) # rad/s
     kappa_max = np.tan(delta_max) / L
 
-    esp32 = Esp32CommandSender()
-    print(f"A enviar comandos UDP para ESP32 em {ESP32_UDP_IP}:{ESP32_UDP_PORT}")
+    car = CarController(v_max=v_max, delta_max=delta_max)
+    car.send_heartbeat()
+    time.sleep(0.02)
+
+    #car.send_cmd(v=0.3, delta=0.15)              
+    #car.send_cmd(v=1, delta=0)
 
     # estado inicial
     x, y, yaw, v = wait_for_initial_state()
@@ -305,6 +276,7 @@ def run_real():
 
             # pure pursuit
             Ld = L0 + kv * abs(v)
+            #Ld = 0.1
             state = (x, y, yaw, v)
 
             v_cmd, w_cmd, target_idx, last_near, cte = pure_pursuit_control(
@@ -312,31 +284,35 @@ def run_real():
                 last_near_idx=last_near,
                 Ld=Ld,
                 v_ref=v_ref
-            )
-
+            )            
+            
             v_cmd = np.clip(v_cmd, -v_max, v_max)
             w_max = abs(v_cmd) * kappa_max
             w_cmd = np.clip(w_cmd, -w_max, w_max)
 
-            # limitar aceleração
-            #dv = np.clip(v_cmd - v, -a_max * dt, a_max * dt)
-            #v_cmd = v + dv
+            nu_nom = np.clip((v_cmd - v) / dt, -a_max, a_max)
 
-            # CBF
-            v_safe, w_safe = qp.cbf_qp_filter(
-                u_nom=(v_cmd, w_cmd),
-                robot_state=(x, y, yaw),
+            # CBF iHOCBF: o QP filtra aceleracao longitudinal e yaw-rate.
+            nu_safe, w_safe = qp.cbf_qp_filter(
+                u_nom=(nu_nom, w_cmd),
+                robot_state=(x, y, yaw, v),
                 obstacles=obstacles,
                 ellipse_ab=(a_ell, b_ell),
                 margin=margin,
                 lookahead_l=0.1,
                 alpha=2.5,
+                dt=dt,
                 W=(250.0, 1.0),
-                v_bounds=(0.0, 2.0),
+                nu_bounds=(-a_max, a_max),
+                v_bounds=(0.0, v_max),
                 w_bounds=(-w_max, w_max),
+                wheelbase=L,
+                delta_bounds=(-delta_max, delta_max),
+                delta_current=delta,
+                delta_rate_max=delta_rate_max,
             )
 
-            v_safe = np.clip(v_safe, -v_max, v_max)
+            v_safe = np.clip(v + nu_safe * dt, 0.0, v_max)
 
             kappa_max = np.tan(delta_max) / L
             w_max_speed = abs(v_safe) * kappa_max
@@ -349,15 +325,15 @@ def run_real():
             #delta = rate_limit(delta_cmd, delta, du_max=delta_rate_max * dt)
             delta = delta_cmd
 
-            # enviar para a ESP32
-            esp32_msg = esp32.send_cmd(v=v_safe, delta=10*delta)
+            # enviar para o carro
+            #car.send_heartbeat()
+            car.send_cmd(v=v_safe, delta=delta)
+            #car.send_cmd(v=0.35, delta=0)
             
             # debug
             print(
                 f"estado: x={x:.3f} m, y={y:.3f} m, yaw={yaw:.3f} rad, v={v:.3f} m/s | "
-                f"pp: target_idx={target_idx} Ld={Ld:.3f} | "
-                f"cmd: v={v_safe:.2f} m/s, w={w_safe:.3f} rad/s, delta={delta:.3f} rad, "
-                f"cte={cte:.3f} | udp='{esp32_msg}'"
+                f"cmd: v={v_safe:.2f} m/s, delta={delta:.2f} rad, cte={cte:.3f}"
             )
 
             # manter frequência
@@ -368,7 +344,7 @@ def run_real():
         print("Parado pelo utilizador")
 
     finally:
-        esp32.stop()
+        car.stop()
 
 
 if __name__ == "__main__":

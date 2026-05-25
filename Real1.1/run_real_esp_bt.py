@@ -3,12 +3,10 @@ import numpy as np
 import qp
 import socket
 import json
-from shared_config import (
-    OBSTACLES_M,
-    ROBOT_ELLIPSE_A_M,
-    ROBOT_ELLIPSE_B_M,
-    TRACK_POINTS_M,
-)
+import asyncio
+from bleak import BleakClient, BleakScanner
+
+from shared_config import OBSTACLES_M, TRACK_POINTS_M
 
 from controller import (
     build_spline_path,
@@ -24,15 +22,17 @@ from controller import (
 VISION_UDP_IP = "0.0.0.0"
 VISION_UDP_PORT = 5005
 VISION_TRACK_ID = 2
-ROUND_CORNER_RADIUS_M = 0.08
-ROUND_CORNER_SAMPLES = 10
+VISION_STALE_TIMEOUT_S = 0.3
+ROUND_CORNER_RADIUS_M = 0.2
+ROUND_CORNER_SAMPLES = 24
+
 
 # ============================================================
-# Comandos para a ESP32 via UDP
+# Comandos para a ESP32 via Bluetooth BLE
 # ============================================================
-#ESP32_UDP_IP = "10.80.229.141"
-ESP32_UDP_IP = "192.168.137.122"
-ESP32_UDP_PORT = 5005
+ESP32_BLE_NAME = "XIAO-C3-CAR"
+
+BLE_RX_UUID = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  # Python escreve aqui
 
 
 class VisionPoseReceiver:
@@ -65,6 +65,7 @@ class VisionPoseReceiver:
     def _process_packet(self, payload):
         tracks = payload.get("tracks", [])
         tr = self._select_track(tracks)
+
         if tr is None:
             return
 
@@ -103,15 +104,21 @@ class VisionPoseReceiver:
                 payload = json.loads(data.decode("utf-8"))
                 self._process_packet(payload)
                 got_new_packet = True
+
             except socket.timeout:
                 break
+
             except Exception:
                 break
 
         if not self.has_state:
             raise RuntimeError("Sem estado da visao ainda (aguardando UDP na porta 5005).")
 
-        if not got_new_packet:
+        if (
+            not got_new_packet
+            and self.prev_t is not None
+            and time.time() - self.prev_t > VISION_STALE_TIMEOUT_S
+        ):
             self.v = 0.0
 
         return self.x, self.y, self.theta, self.v
@@ -121,24 +128,51 @@ _vision_receiver = VisionPoseReceiver()
 
 
 class Esp32CommandSender:
-    def __init__(self, target_ip=ESP32_UDP_IP, target_port=ESP32_UDP_PORT):
-        self.target = (target_ip, target_port)
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    def __init__(self, ble_name=ESP32_BLE_NAME):
+        self.ble_name = ble_name
+        self.client = None
 
     @staticmethod
     def format_command(v, delta):
         return f"V:{v:.3f} D:{delta:.3f}"
 
-    def send_cmd(self, v, delta):
+    async def connect(self):
+        print(f"A procurar BLE: {self.ble_name}")
+
+        device = await BleakScanner.find_device_by_name(
+            self.ble_name,
+            timeout=10.0
+        )
+
+        if device is None:
+            raise RuntimeError(f"Não encontrei o dispositivo BLE '{self.ble_name}'")
+
+        self.client = BleakClient(device)
+        await self.client.connect()
+
+        print(f"Ligado por BLE a {self.ble_name}")
+
+    async def send_cmd(self, v, delta):
         msg = self.format_command(v, delta)
-        self.sock.sendto(msg.encode("utf-8"), self.target)
+
+        if self.client is None or not self.client.is_connected:
+            raise RuntimeError("BLE não está ligado")
+
+        await self.client.write_gatt_char(
+            BLE_RX_UUID,
+            msg.encode("utf-8"),
+            response=False
+        )
+
         return msg
 
-    def stop(self):
+    async def stop(self):
         try:
-            self.send_cmd(0.0, 0.0)
-        finally:
-            self.sock.close()
+            if self.client and self.client.is_connected:
+                await self.send_cmd(0.0, 0.0)
+                await self.client.disconnect()
+        except Exception:
+            pass
 
 
 def get_robot_state():
@@ -151,8 +185,10 @@ def get_robot_state():
 
 def build_rounded_polyline(points, corner_radius=0.08, corner_samples=10, closed=True):
     n = len(points)
+
     if n < 2:
         return points.copy()
+
     if n == 2:
         return points.copy()
 
@@ -160,31 +196,47 @@ def build_rounded_polyline(points, corner_radius=0.08, corner_samples=10, closed
 
     if not closed:
         out_open = [tuple(pts[0])]
+
         for i in range(1, n - 1):
             p_prev = pts[i - 1]
             p_curr = pts[i]
             p_next = pts[i + 1]
+
             v_in = p_curr - p_prev
             v_out = p_next - p_curr
+
             len_in = float(np.linalg.norm(v_in))
             len_out = float(np.linalg.norm(v_out))
+
             if len_in < 1e-9 or len_out < 1e-9:
                 out_open.append(tuple(p_curr))
                 continue
+
             u_in = v_in / len_in
             u_out = v_out / len_out
+
             d = min(corner_radius, 0.45 * len_in, 0.45 * len_out)
+
             p_start = p_curr - u_in * d
             p_end = p_curr + u_out * d
+
             out_open.append(tuple(p_start))
+
             for t in np.linspace(0.0, 1.0, corner_samples + 2)[1:-1]:
-                pt = ((1.0 - t) ** 2) * p_start + 2.0 * (1.0 - t) * t * p_curr + (t ** 2) * p_end
+                pt = (
+                    ((1.0 - t) ** 2) * p_start
+                    + 2.0 * (1.0 - t) * t * p_curr
+                    + (t ** 2) * p_end
+                )
                 out_open.append((float(pt[0]), float(pt[1])))
+
             out_open.append(tuple(p_end))
+
         out_open.append(tuple(pts[-1]))
         return out_open
 
     out = []
+
     for i in range(n):
         p_prev = pts[(i - 1) % n]
         p_curr = pts[i]
@@ -192,6 +244,7 @@ def build_rounded_polyline(points, corner_radius=0.08, corner_samples=10, closed
 
         v_in = p_curr - p_prev
         v_out = p_next - p_curr
+
         len_in = float(np.linalg.norm(v_in))
         len_out = float(np.linalg.norm(v_out))
 
@@ -200,15 +253,22 @@ def build_rounded_polyline(points, corner_radius=0.08, corner_samples=10, closed
 
         u_in = v_in / len_in
         u_out = v_out / len_out
+
         d = min(corner_radius, 0.45 * len_in, 0.45 * len_out)
 
         p_start = p_curr - u_in * d
         p_end = p_curr + u_out * d
 
         out.append((float(p_start[0]), float(p_start[1])))
+
         for t in np.linspace(0.0, 1.0, corner_samples + 2)[1:-1]:
-            pt = ((1.0 - t) ** 2) * p_start + 2.0 * (1.0 - t) * t * p_curr + (t ** 2) * p_end
+            pt = (
+                ((1.0 - t) ** 2) * p_start
+                + 2.0 * (1.0 - t) * t * p_curr
+                + (t ** 2) * p_end
+            )
             out.append((float(pt[0]), float(pt[1])))
+
         out.append((float(p_end[0]), float(p_end[1])))
 
     return out
@@ -218,62 +278,43 @@ def wait_for_initial_state():
     while True:
         try:
             return get_robot_state()
+
         except Exception as e:
             print(f"A aguardar estado inicial... {e}")
             time.sleep(0.1)
 
 
 # ============================================================
-# Loop principal (SEM plots)
+# Loop principal
 # ============================================================
 
-def run_real():
+async def run_real():
     waypoints = build_rounded_polyline(
         TRACK_POINTS_M,
         corner_radius=ROUND_CORNER_RADIUS_M,
         corner_samples=ROUND_CORNER_SAMPLES,
         closed=True,
     )
+
     if waypoints and waypoints[0] != waypoints[-1]:
         waypoints.append(waypoints[0])
 
     px, py, pyaw, s = build_spline_path(waypoints, ds=0.01)
 
-    # obstáculos
-    n_obs = 5
-    idxs = np.linspace(0, len(px) - 1, n_obs + 2, dtype=int)[1:-1]
-
-    
     obstacles = [dict(obstacle) for obstacle in OBSTACLES_M]
-    '''
-    for k, idx in enumerate(idxs):
-        x_path = px[idx]
-        y_path = py[idx]
-        yaw_path = pyaw[idx]
-
-        nx = -np.sin(yaw_path)
-        ny = np.cos(yaw_path)
-
-        side = (-1) ** k
-        offset = 0.3
-
-        obstacles.append({
-            "x": x_path + side * offset * nx,
-            "y": y_path + side * offset * ny,
-            "r": 0.35
-        })
-    '''
 
     # parâmetros
     dt = 0.02
-    v_ref = 0.38
+    v_ref = 0.3
     L0 = 0.5
     kv = 0.0
+    k_pp = 4
 
     v_max = 0.47
+    v_command_max = min(v_ref, v_max)
     a_max = 2.0
 
-    a_ell, b_ell = ROBOT_ELLIPSE_A_M, ROBOT_ELLIPSE_B_M
+    a_ell, b_ell = 0.03, 0.03
     margin = 0.001
 
     last_near = 0
@@ -282,62 +323,73 @@ def run_real():
     delta = 0.0
 
     # Parâmetros bicycle/servo
-    L = 0.06                         # entre-eixos (m)
-    delta_max = np.deg2rad(30)     # limite do servo
-    delta_rate_max = np.deg2rad(300) # rad/s
+    L = 0.06
+    delta_max = np.deg2rad(13)
+    delta_rate_max = np.deg2rad(300)
     kappa_max = np.tan(delta_max) / L
 
     esp32 = Esp32CommandSender()
-    print(f"A enviar comandos UDP para ESP32 em {ESP32_UDP_IP}:{ESP32_UDP_PORT}")
+    await esp32.connect()
 
-    # estado inicial
     x, y, yaw, v = wait_for_initial_state()
+
     print(
-        f"Estado inicial recebido: x={x:.3f} m, y={y:.3f} m, yaw={yaw:.3f} rad, v={v:.3f} m/s"
+        f"Estado inicial recebido: x={x:.3f} m, y={y:.3f} m, "
+        f"yaw={yaw:.3f} rad, v={v:.3f} m/s"
     )
+    v_control = np.clip(v, 0.0, v_command_max)
 
     try:
         while True:
             t0 = time.time()
 
-            # ler estado REAL
-            x, y, yaw, v = get_robot_state()
+            x, y, yaw, v_meas = get_robot_state()
+            if not np.isfinite(v_meas):
+                v_meas = v_control
+            v_est = np.clip(max(v_control, v_meas), 0.0, v_max)
 
-            # pure pursuit
-            Ld = L0 + kv * abs(v)
-            state = (x, y, yaw, v)
+            Ld = L0 + kv * abs(v_est)
+            state = (x, y, yaw, v_est)
 
             v_cmd, w_cmd, target_idx, last_near, cte = pure_pursuit_control(
-                px, py, state,
+                px,
+                py,
+                state,
                 last_near_idx=last_near,
                 Ld=Ld,
-                v_ref=v_ref
+                v_ref=v_ref,
+                k_pp=k_pp,
             )
 
-            v_cmd = np.clip(v_cmd, -v_max, v_max)
+            v_cmd = np.clip(v_cmd, 0.0, v_command_max)
+
             w_max = abs(v_cmd) * kappa_max
             w_cmd = np.clip(w_cmd, -w_max, w_max)
 
-            # limitar aceleração
-            #dv = np.clip(v_cmd - v, -a_max * dt, a_max * dt)
-            #v_cmd = v + dv
+            nu_nom = np.clip((v_cmd - v_est) / dt, -a_max, a_max)
 
-            # CBF
-            v_safe, w_safe = qp.cbf_qp_filter(
-                u_nom=(v_cmd, w_cmd),
-                robot_state=(x, y, yaw),
+            # CBF iHOCBF: o QP filtra aceleracao longitudinal e yaw-rate.
+            nu_safe, w_safe = qp.cbf_qp_filter(
+                u_nom=(nu_nom, w_cmd),
+                robot_state=(x, y, yaw, v_est),
                 obstacles=obstacles,
                 ellipse_ab=(a_ell, b_ell),
                 margin=margin,
-                lookahead_l=0.1,
+                lookahead_l=0.15,
                 alpha=2.5,
-                W=(250.0, 1.0),
-                v_bounds=(0.0, 2.0),
+                alpha1=5, alpha2=5,
+                dt=dt,
+                W=(2500000000000000000.0, 0.01),
+                nu_bounds=(-a_max, a_max),
+                v_bounds=(0.0, v_max),
                 w_bounds=(-w_max, w_max),
+                wheelbase=L,
+                delta_bounds=(-delta_max, delta_max),
+                delta_current=delta,
+                delta_rate_max=delta_rate_max,
             )
 
-            v_safe = np.clip(v_safe, -v_max, v_max)
-
+            v_safe = np.clip(v_est + nu_safe * dt, 0.0, v_max)
             kappa_max = np.tan(delta_max) / L
             w_max_speed = abs(v_safe) * kappa_max
             w_safe = np.clip(w_safe, -w_max_speed, w_max_speed)
@@ -345,31 +397,45 @@ def run_real():
             delta_cmd = omega_to_delta(w_safe, v_safe, L, v_min=0.2)
             delta_cmd = np.clip(delta_cmd, -delta_max, delta_max)
 
-            # limita taxa do servo
-            #delta = rate_limit(delta_cmd, delta, du_max=delta_rate_max * dt)
+            # Se quiseres suavizar servo, troca para:
+            # delta = rate_limit(delta_cmd, delta, du_max=delta_rate_max * dt)
             delta = delta_cmd
 
-            # enviar para a ESP32
-            esp32_msg = esp32.send_cmd(v=v_safe, delta=10*delta)
+            if 0.0 < delta < 0.05:
+                delta_send = 0.05
+            elif 0.1 < delta < 0.25:
+                delta_send = delta
+            elif -0.25 < delta < -0.1:
+                delta_send = delta
+            elif -0.05 < delta < 0.0:
+                delta_send = -0.05               
+            else:
+                delta_send = delta
             
-            # debug
+            v_send = np.clip(v_safe - (delta**2), 0.0, v_command_max)
+            v_control = v_send
+
+            esp32_msg = await esp32.send_cmd(v=v_send, delta = 1.5 * delta)
+            #esp32_msg = await esp32.send_cmd(v=0.2, delta=3.0)
+
             print(
-                f"estado: x={x:.3f} m, y={y:.3f} m, yaw={yaw:.3f} rad, v={v:.3f} m/s | "
+                f"estado: x={x:.3f} m, y={y:.3f} m, yaw={yaw:.3f} rad, "
+                f"v_meas={v_meas:.3f} m/s, v_est={v_est:.3f} m/s | "
                 f"pp: target_idx={target_idx} Ld={Ld:.3f} | "
-                f"cmd: v={v_safe:.2f} m/s, w={w_safe:.3f} rad/s, delta={delta:.3f} rad, "
-                f"cte={cte:.3f} | udp='{esp32_msg}'"
+                f"cmd: v={v_send:.2f} m/s, w={w_safe:.3f} rad/s, "
+                f"delta={delta:.3f} rad, delta_send={delta_send:.3f} rad, cte={cte:.3f} | "
+                f"ble='{esp32_msg}'"
             )
 
-            # manter frequência
             elapsed = time.time() - t0
-            time.sleep(max(0.0, dt - elapsed))
+            await asyncio.sleep(max(0.0, dt - elapsed))
 
     except KeyboardInterrupt:
         print("Parado pelo utilizador")
 
     finally:
-        esp32.stop()
+        await esp32.stop()
 
 
 if __name__ == "__main__":
-    run_real()
+    asyncio.run(run_real())
