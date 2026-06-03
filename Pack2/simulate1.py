@@ -136,6 +136,9 @@ def save_track_only():
 def simulate():
     script_dir = Path(__file__).resolve().parent
     pdf_path = script_dir / "simulate1_volta_completa.pdf"
+    linear_speed_pdf_path = script_dir / "simulate1_velocidade_linear_clf_qp.pdf"
+    angular_speed_pdf_path = script_dir / "simulate1_velocidade_angular_clf_qp.pdf"
+    delta_pdf_path = script_dir / "simulate1_delta_clf_qp.pdf"
 
     waypoints = [
         (3.0, 3.0),
@@ -192,8 +195,8 @@ def simulate():
         (12.0, 2.0),
         (10.8, 2.0),
         (9.6, 2.0),
-        (8.4, 4.0),
-        (7.2, 4.0),
+        (8.4, 2.0),
+        (7.2, 2.0),
         (6.0, 2.0),
         (4.0, 2.5),
         (3.0, 3.0),
@@ -220,11 +223,13 @@ def simulate():
         ox = x_path + side * offset * nx
         oy = y_path + side * offset * ny
 
+        
         obstacles.append({
             "x": ox,
             "y": oy,
             "r": 0.35,
         })
+        
 
     x, y, yaw, v = 2, 6, np.deg2rad(90), 0.0
 
@@ -243,6 +248,9 @@ def simulate():
 
     last_near = 0
     hx, hy, ctes = [], [], []
+    v_controller_hist, v_qp_hist = [], []
+    omega_controller_hist, omega_qp_hist = [], []
+    delta_controller_hist, delta_qp_hist = [], []
     lap_progress_idx = 0.0
     prev_near_idx = None
     stop_requested = False
@@ -319,11 +327,66 @@ def simulate():
             ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5))
         plt.pause(0.001)
 
+    def show_velocity_plots():
+        if not v_controller_hist:
+            return
+
+        t = np.arange(len(v_controller_hist)) * dt
+        line_width = 2.2
+        title_fontsize = 14
+        label_fontsize = 13
+        tick_fontsize = 11
+        legend_fontsize = 12
+
+        fig_v, ax_v = plt.subplots()
+        ax_v.plot(t, v_controller_hist, label="Controller", linewidth=line_width)
+        ax_v.plot(t, v_qp_hist, label="QP", linewidth=line_width)
+        ax_v.set_title("Linear velocity: Controller vs QP", fontsize=title_fontsize)
+        ax_v.set_xlabel("Time [s]", fontsize=label_fontsize)
+        ax_v.set_ylabel("v [m/s]", fontsize=label_fontsize)
+        ax_v.grid(False)
+        ax_v.tick_params(axis="both", labelsize=tick_fontsize)
+        ax_v.legend(fontsize=legend_fontsize)
+        fig_v.tight_layout()
+        fig_v.savefig(linear_speed_pdf_path, format="pdf", bbox_inches="tight")
+
+        fig_omega, ax_omega = plt.subplots()
+        ax_omega.plot(t, omega_controller_hist, label="Controller", linewidth=line_width)
+        ax_omega.plot(t, omega_qp_hist, label="QP", linewidth=line_width)
+        ax_omega.set_title("Angular velocity: Controller vs QP", fontsize=title_fontsize)
+        ax_omega.set_xlabel("Time [s]", fontsize=label_fontsize)
+        ax_omega.set_ylabel("w [rad/s]", fontsize=label_fontsize)
+        ax_omega.grid(False)
+        ax_omega.tick_params(axis="both", labelsize=tick_fontsize)
+        ax_omega.legend(fontsize=legend_fontsize)
+        fig_omega.tight_layout()
+        fig_omega.savefig(angular_speed_pdf_path, format="pdf", bbox_inches="tight")
+
+        fig_delta, ax_delta = plt.subplots()
+        ax_delta.plot(t, delta_controller_hist, label="Controller", linewidth=line_width)
+        ax_delta.plot(t, delta_qp_hist, label="QP", linewidth=line_width)
+        ax_delta.set_title("Steering angle: Controller vs QP", fontsize=title_fontsize)
+        ax_delta.set_xlabel("Time [s]", fontsize=label_fontsize)
+        ax_delta.set_ylabel("delta [rad]", fontsize=label_fontsize)
+        ax_delta.grid(False)
+        ax_delta.tick_params(axis="both", labelsize=tick_fontsize)
+        ax_delta.legend(fontsize=legend_fontsize)
+        fig_delta.tight_layout()
+        fig_delta.savefig(delta_pdf_path, format="pdf", bbox_inches="tight")
+
+        print(
+            "Graficos guardados em: "
+            f"{linear_speed_pdf_path}, {angular_speed_pdf_path} e {delta_pdf_path}"
+        )
+        plt.show()
+
     for k in range(steps):
         Ld = L0 + kv * abs(v)
 
         v_nom = v_ref
         w_nom = 0.0
+        delta_controller = omega_to_delta(w_nom, v_nom, L, v_min=0.2)
+        delta_controller = np.clip(delta_controller, -delta_max, delta_max)
 
         u_safe, clf_info = qp.cbf_clf_qp_filter(
             u_nom=(v_nom, w_nom),
@@ -336,12 +399,12 @@ def simulate():
             last_path_idx=last_near,
             ellipse_ab=(a_ell, b_ell),
             margin=margin,
-            lookahead_l=0.1,
-            alpha=5,
-            eps_clf=3,
-            q_clf=(1.0, 10.0, 0.01),
+            lookahead_l=0.1, #0.1
+            alpha=5, #5
+            eps_clf=3, #3
+            q_clf=(1.0, 10.0, 1), #1 10 0.01
             W=(100000.0, 1.0),
-            p_slack=50.0,
+            p_slack=50.0, #50
             v_ref=v_ref,
             v_bounds=(0.0, 2.0),
             w_bounds=(-w_max, w_max),
@@ -371,10 +434,18 @@ def simulate():
         delta_cmd = np.clip(delta_cmd, -delta_max, delta_max)
 
         delta = rate_limit(delta_cmd, delta, du_max=delta_rate_max * dt)
+        w_applied = (v_safe / L) * np.tan(delta)
+
+        v_controller_hist.append(v_nom)
+        v_qp_hist.append(v_safe)
+        omega_controller_hist.append(w_nom)
+        omega_qp_hist.append(w_applied)
+        delta_controller_hist.append(delta_controller)
+        delta_qp_hist.append(delta)
 
         x += v_safe * np.cos(yaw) * dt
         y += v_safe * np.sin(yaw) * dt
-        yaw = wrap_to_pi(yaw + (v_safe / L) * np.tan(delta) * dt)
+        yaw = wrap_to_pi(yaw + w_applied * dt)
 
         hx.append(x)
         hy.append(y)
@@ -383,34 +454,30 @@ def simulate():
         lap_completed = lap_progress_idx >= (n_path - 1)
 
         if k % 5 == 0 or lap_completed:
-            draw_frame(Ld, v_safe, w_safe, cte)
+            draw_frame(Ld, v_safe, w_applied, cte)
 
         if stop_requested:
-            draw_frame(Ld, v_safe, w_safe, cte, show_labels=False)
+            draw_frame(Ld, v_safe, w_applied, cte, show_labels=False)
             fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
             print(f"Simulacao encerrada por Enter. Figura guardada em: {pdf_path}")
             plt.ioff()
             plt.close(fig)
+            show_velocity_plots()
             return pdf_path
 
         if lap_completed:
-            draw_frame(Ld, v_safe, w_safe, cte, show_labels=False)
+            draw_frame(Ld, v_safe, w_applied, cte, show_labels=False)
             fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
             print(f"Volta completa. Figura guardada em: {pdf_path}")
             plt.ioff()
             plt.close(fig)
+            show_velocity_plots()
             return pdf_path
 
     plt.ioff()
+    plt.close(fig)
     print("A simulacao terminou por tempo maximo sem completar uma volta.")
-
-    fig2, ax2 = plt.subplots()
-    ax2.plot(ctes)
-    ax2.set_title("Erro lateral (aprox) - CLF")
-    ax2.set_xlabel("Passo")
-    ax2.set_ylabel("cte~ [m]")
-    ax2.grid(False)
-    plt.show()
+    show_velocity_plots()
 
 
 if __name__ == "__main__":

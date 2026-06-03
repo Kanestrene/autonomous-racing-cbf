@@ -1,4 +1,5 @@
 import numpy as np
+from pathlib import Path
 from qpsolvers import solve_qp
 import cbf 
 
@@ -8,7 +9,8 @@ def cbf_qp_filter(u_nom, robot_state, obstacles,
                   margin=0.05, lookahead_l=0.35, alpha=2.0,
                   W=(20.0, 1.0),
                   v_bounds=(0.0, 1.5), w_bounds=(-2.5, 2.5),
-                  solver_preference=("quadprog", "daqp")):
+                  solver_preference=("quadprog", "daqp"),
+                  use_barriers=True):
     """
     Resolve:
       min (u-u_nom)^T W (u-u_nom)
@@ -30,19 +32,24 @@ def cbf_qp_filter(u_nom, robot_state, obstacles,
         lookahead_l=lookahead_l, alpha=alpha
     )
 
-    inner = np.loadtxt("barreira_suavizada_interna.txt")
-    outer = np.loadtxt("barreira_suavizada_externa.txt")
+    if use_barriers:
+        base_dir = Path(__file__).resolve().parent
+        inner = np.loadtxt(base_dir / "barreira_suavizada_interna.txt")
+        outer = np.loadtxt(base_dir / "barreira_suavizada_externa.txt")
 
-    G_barrier, h_barrier = cbf.cbf_rows_for_barriers(
-        x, y, th,
-        barrier_inner=inner,
-        barrier_outer=outer,
-        ellipse_ab=ellipse_ab,
-        margin=margin,
-        lookahead_l=0.05,
-        alpha=alpha,
-        max_segments=10
-    )
+        G_barrier, h_barrier = cbf.cbf_rows_for_barriers(
+            x, y, th,
+            barrier_inner=inner,
+            barrier_outer=outer,
+            ellipse_ab=ellipse_ab,
+            margin=margin,
+            lookahead_l=0.01,
+            alpha=4,
+            max_segments=10
+        )
+    else:
+        G_barrier = np.zeros((0, 2), dtype=float)
+        h_barrier = np.zeros((0,), dtype=float)
 
     # bounds (box) em G u <= h
     vmin, vmax = v_bounds

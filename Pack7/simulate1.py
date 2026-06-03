@@ -5,10 +5,12 @@ from pathlib import Path
 
 import qp
 from ml_cbf_experiment import (
+    DEFAULT_OBSTACLE_PATH_OFFSET_M,
     build_problem,
     min_barrier_clearance,
     min_obstacle_clearance,
     score_episode,
+    shift_path_indices,
     start_state_for_variation,
 )
 
@@ -20,7 +22,7 @@ from controller import (
 )
 
 
-def save_track_only():
+def save_track_only(obstacle_path_offset_m=DEFAULT_OBSTACLE_PATH_OFFSET_M):
     script_dir = Path(__file__).resolve().parent
     pdf_path = script_dir / "pista.pdf"
 
@@ -79,8 +81,8 @@ def save_track_only():
         (12.0, 2.0),
         (10.8, 2.0),
         (9.6, 2.0),
-        (8.4, 4.0),
-        (7.2, 4.0),
+        (8.4, 2.0),
+        (7.2, 2.0),
         (6.0, 2.0),
         (4.0, 2.5),
         (3.0, 3.0),
@@ -91,6 +93,7 @@ def save_track_only():
 
     n_obs = 5
     idxs = np.linspace(0, n_path - 1, n_obs + 2, dtype=int)[1:-1]
+    idxs = shift_path_indices(px, py, idxs, obstacle_path_offset_m)
     obstacles = []
 
     for k, idx in enumerate(idxs):
@@ -142,8 +145,8 @@ def save_track_only():
 
 def simulate():
     script_dir = Path(__file__).resolve().parent
-    pdf_path = script_dir / "simulate1_volta_completa.pdf"
     variation_id = 15
+    obstacle_path_offset_m = DEFAULT_OBSTACLE_PATH_OFFSET_M
 
     waypoints = [
         (3.0, 3.0),
@@ -200,14 +203,17 @@ def simulate():
         (12.0, 2.0),
         (10.8, 2.0),
         (9.6, 2.0),
-        (8.4, 4.0),
-        (7.2, 4.0),
+        (8.4, 2.0),
+        (7.2, 2.0),
         (6.0, 2.0),
         (4.0, 2.5),
         (3.0, 3.0),
     ]
 
-    px, py, pyaw, s, obstacles, inner_bar, outer_bar = build_problem(variation_id=variation_id)
+    px, py, pyaw, s, obstacles, inner_bar, outer_bar = build_problem(
+        variation_id=variation_id,
+        obstacle_path_offset_m=obstacle_path_offset_m,
+    )
     n_path = len(px)
 
     x, y, yaw, v = start_state_for_variation(variation_id)
@@ -224,9 +230,13 @@ def simulate():
 
     a_ell, b_ell = 0.30, 0.20
     margin = 0.05
-    class_k_p = 6
-    class_k_q = 1
+    class_k_p = 7 #3 #6.76 #5.98
+    class_k_q = 1 #1 #1.03 #1.13
     alpha = 3.0
+    params_suffix = f"p{class_k_p:g}_q{class_k_q:g}"
+    pdf_path = script_dir / f"simulate1_volta_completa_{params_suffix}.pdf"
+    linear_speed_pdf_path = script_dir / f"simulate1_velocidade_linear_clf_qp_{params_suffix}.pdf"
+    cte_pdf_path = script_dir / f"simulate1_erro_lateral_{params_suffix}.pdf"
 
     last_near = 0
     hx, hy, ctes = [], [], []
@@ -265,11 +275,11 @@ def simulate():
         ax.clear()
         ax.set_facecolor("white")
 
-        ax.plot(px, py, "--", label="Spline (referencia)")
-        ax.plot(hx, hy, "-", label="Trajetoria robo (CLF + CBF)")
+        ax.plot(px, py, "--", label="Reference spline")
+        ax.plot(hx, hy, "-", label="Robot trajectory (CLF + CBF)")
 
-        ax.plot(inner_x, inner_y, "-", color = "green", linewidth=2, label="Barreira interna")
-        ax.plot(outer_x, outer_y, "-", color = "green", linewidth=2, label="Barreira externa")
+        ax.plot(inner_x, inner_y, "-", color = "green", linewidth=2, label="Inner barrier")
+        ax.plot(outer_x, outer_y, "-", color = "green", linewidth=2, label="Outer barrier")
 
         for obs in obstacles:
             ax.add_patch(Circle((obs["x"], obs["y"]), obs["r"], fill=False))
@@ -292,9 +302,8 @@ def simulate():
         )
         ax.add_patch(ell_safe)
 
-        ax.plot(x, y, "o", label="Robo")
+        ax.plot(x, y, "o", label="Robot")
         ax.arrow(x, y, 0.4 * np.cos(yaw), 0.4 * np.sin(yaw), head_width=0.15)
-        ax.add_patch(Circle((x, y), Ld, fill=False))
 
         ax.set_aspect("equal", "box")
         ax.grid(False)
@@ -370,6 +379,60 @@ def simulate():
             f"collided={metrics['collided']}"
         )
 
+    def save_final_plots():
+        saved_paths = []
+        line_width = 2.2
+        title_fontsize = 14
+        label_fontsize = 13
+        tick_fontsize = 11
+        legend_fontsize = 12
+
+        if v_safe_values:
+            t = np.arange(len(v_safe_values)) * dt
+            fig_v, ax_v = plt.subplots()
+            ax_v.plot(t, np.full(len(v_safe_values), v_ref), label="Controller", linewidth=line_width)
+            ax_v.plot(t, v_safe_values, label="QP", linewidth=line_width)
+            ax_v.set_title("Linear velocity: Controller vs QP", fontsize=title_fontsize)
+            ax_v.set_xlabel("Time [s]", fontsize=label_fontsize)
+            ax_v.set_ylabel("v [m/s]", fontsize=label_fontsize)
+            ax_v.grid(False)
+            ax_v.tick_params(axis="both", labelsize=tick_fontsize)
+            ax_v.legend(fontsize=legend_fontsize)
+            fig_v.tight_layout()
+            fig_v.savefig(linear_speed_pdf_path, format="pdf", bbox_inches="tight")
+            plt.close(fig_v)
+            saved_paths.append(linear_speed_pdf_path)
+
+        if ctes:
+            t = np.arange(len(ctes)) * dt
+            fig_cte, ax_cte = plt.subplots()
+            ax_cte.plot(t, ctes, linewidth=line_width)
+            ax_cte.set_title("Lateral track error", fontsize=title_fontsize)
+            ax_cte.set_xlabel("Time [s]", fontsize=label_fontsize)
+            ax_cte.set_ylabel("Lateral error [m]", fontsize=label_fontsize)
+            ax_cte.grid(False)
+            ax_cte.tick_params(axis="both", labelsize=tick_fontsize)
+            fig_cte.tight_layout()
+            fig_cte.savefig(cte_pdf_path, format="pdf", bbox_inches="tight")
+            plt.close(fig_cte)
+            saved_paths.append(cte_pdf_path)
+
+        if saved_paths:
+            print("Graficos guardados em: " + ", ".join(str(path) for path in saved_paths))
+
+    def finalize_simulation(message, completed, Ld, v_safe, w_safe, cte):
+        draw_frame(Ld, v_safe, w_safe, cte, show_labels=False)
+        fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
+        print(f"{message} Figura guardada em: {pdf_path}")
+        print_speed_metrics()
+        print_score_summary(completed=completed)
+        save_final_plots()
+        plt.ioff()
+        plt.close(fig)
+        return pdf_path
+    
+    w_safe = 0
+
     for k in range(steps):
         Ld = L0 + kv * abs(v)
 
@@ -377,7 +440,7 @@ def simulate():
         w_nom = 0.0
 
         u_safe, clf_info = qp.cbf_clf_qp_filter(
-            u_nom=(v_nom, w_nom),
+            u_nom=(v_nom, np.sign(w_safe)*2),
             robot_state=(x, y, yaw),
             obstacles=obstacles,
             px=px,
@@ -452,47 +515,43 @@ def simulate():
             draw_frame(Ld, v_safe, w_safe, cte)
 
         if stop_requested:
-            draw_frame(Ld, v_safe, w_safe, cte, show_labels=False)
-            fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
-            print(f"Simulacao encerrada por Enter. Figura guardada em: {pdf_path}")
-            print_speed_metrics()
-            print_score_summary(completed=False)
-            plt.ioff()
-            plt.close(fig)
-            return pdf_path
+            return finalize_simulation(
+                "Simulacao encerrada por Enter.",
+                completed=False,
+                Ld=Ld,
+                v_safe=v_safe,
+                w_safe=w_safe,
+                cte=cte,
+            )
 
         if lap_completed:
-            draw_frame(Ld, v_safe, w_safe, cte, show_labels=False)
-            fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
-            print(f"Volta completa. Figura guardada em: {pdf_path}")
-            print_speed_metrics()
-            print_score_summary(completed=True)
-            plt.ioff()
-            plt.close(fig)
-            return pdf_path
+            return finalize_simulation(
+                "Volta completa.",
+                completed=True,
+                Ld=Ld,
+                v_safe=v_safe,
+                w_safe=w_safe,
+                cte=cte,
+            )
 
         if collided:
-            draw_frame(Ld, v_safe, w_safe, cte, show_labels=False)
-            fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
-            print(f"Simulacao terminou por colisao. Figura guardada em: {pdf_path}")
-            print_speed_metrics()
-            print_score_summary(completed=False)
-            plt.ioff()
-            plt.close(fig)
-            return pdf_path
+            return finalize_simulation(
+                "Simulacao terminou por colisao.",
+                completed=False,
+                Ld=Ld,
+                v_safe=v_safe,
+                w_safe=w_safe,
+                cte=cte,
+            )
 
-    plt.ioff()
-    print("A simulacao terminou por tempo maximo sem completar uma volta.")
-    print_speed_metrics()
-    print_score_summary(completed=False)
-
-    fig2, ax2 = plt.subplots()
-    ax2.plot(ctes)
-    ax2.set_title("Erro lateral (aprox) - CLF")
-    ax2.set_xlabel("Passo")
-    ax2.set_ylabel("cte~ [m]")
-    ax2.grid(False)
-    plt.show()
+    return finalize_simulation(
+        "A simulacao terminou por tempo maximo sem completar uma volta.",
+        completed=False,
+        Ld=Ld,
+        v_safe=v_safe,
+        w_safe=w_safe,
+        cte=cte,
+    )
 
 
 if __name__ == "__main__":

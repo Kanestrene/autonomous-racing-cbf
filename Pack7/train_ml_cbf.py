@@ -23,7 +23,7 @@ def parse_args():
         type=int,
         default=1,
     )
-    parser.add_argument("--horizon", type=float, default=50.0)
+    parser.add_argument("--horizon", type=float, default=55.0)
     parser.add_argument("--dt", type=float, default=0.02)
     parser.add_argument("--record-stride", type=int, default=10)
     parser.add_argument("--seed", type=int, default=7)

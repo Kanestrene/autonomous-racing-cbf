@@ -305,10 +305,10 @@ async def run_real():
 
     # parâmetros
     dt = 0.02
-    v_ref = 0.3
-    L0 = 0.4
+    v_ref = 0.3 #0.3
+    L0 = 0.35
     kv = 0.0
-    k_pp = 3.5
+    k_pp = 5
 
     v_max = 0.47
     a_max = 2.0
@@ -358,9 +358,10 @@ async def run_real():
 
             v_cmd = np.clip(v_cmd, -v_max, v_max)
 
-            w_max = abs(v_cmd) * kappa_max
+            #w_max = abs(v_cmd) * kappa_max
+            w_max = abs(v_max) * kappa_max
             w_cmd = np.clip(w_cmd, -w_max, w_max)
-
+           
             # CBF
             v_safe, w_safe = qp.cbf_qp_filter(
                 u_nom=(v_cmd, w_cmd),
@@ -379,7 +380,7 @@ async def run_real():
 
             kappa_max = np.tan(delta_max) / L
             w_max_speed = abs(v_safe) * kappa_max
-            w_safe = np.clip(w_safe, -w_max_speed, w_max_speed)
+            #w_safe = np.clip(w_safe, -w_max_speed, w_max_speed)
 
             delta_cmd = omega_to_delta(w_safe, v_safe, L, v_min=0.2)
             delta_cmd = np.clip(delta_cmd, -delta_max, delta_max)

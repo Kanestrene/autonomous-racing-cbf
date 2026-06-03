@@ -70,8 +70,8 @@ def should_consider_other(car, other, d_act=3.0):
 
 # parâmetros "leader" vs "follower"
 QP_PARAMS = {
-    "leader":   {"W": (100.0, 1.0), "alpha": 5.0, "lookahead_l": 0.10},
-    "follower": {"W": ( 10.0, 1.0), "alpha": 3.0, "lookahead_l": 0.30},
+    "leader":   {"W": (2000.0, 1.0), "alpha": 2.0, "lookahead_l": 0.10},
+    "follower": {"W": (200.0, 1.0), "alpha": 2.5, "lookahead_l": 0.10},
 }
 
 def simulate():

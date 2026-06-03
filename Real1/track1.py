@@ -16,6 +16,10 @@ import json
 import socket
 import re
 from pathlib import Path
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from shared_config import (
     BARRIER_INNER_M,
     BARRIER_OUTER_M,
@@ -112,6 +116,11 @@ PC_IP = "127.0.0.1"
 PC_PORT = 5005
 SEND_UDP = True
 TRACK_ID = 2
+
+# Video recording
+RECORD_OUTPUT_DIR = Path(__file__).with_name("recordings")
+RECORD_FPS_FALLBACK = 20.0
+RECORD_CODEC = "mp4v"
 
 #Get the overlay image
 #Parameters: the shape of the video feed
@@ -537,7 +546,14 @@ def save_control_points_to_shared_config():
     print(f"Pontos e obstaculos guardados em {SHARED_CONFIG_PATH.name}.")
 
 
-def handle_tracking_key(key):
+def handle_tracking_key(key, tracking_frame=None):
+    if key == 13:
+        if tracking_frame is not None:
+            save_tracking_frame_pdf(tracking_frame)
+        else:
+            print("No tracking frame available to save yet.")
+        return False
+
     if key in (ord("q"), ord("Q")):
         if edited_points_dirty:
             print("Tens alteracoes por guardar. Carrega em S para guardar, ou Esc para sair sem guardar.")
@@ -588,7 +604,7 @@ def draw_barrier(img, barrier_points_m, color):
 
 
 def draw_barriers(img):
-    draw_barrier(img, BARRIER_INNER_M, (0, 255, 0))
+    draw_barrier(img, BARRIER_INNER_M, (0, 0, 255))
     draw_barrier(img, BARRIER_OUTER_M, (0, 0, 255))
 
 
@@ -662,6 +678,62 @@ def build_udp_payload(frame_counter, x_px, y_px, x_m, y_m):
             "source": "track1"
         }]
     }
+
+def get_recording_fps(cap):
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if not np.isfinite(fps) or fps <= 1.0:
+        return RECORD_FPS_FALLBACK
+    return float(fps)
+
+
+class WindowRecorder:
+    def __init__(self, window_name, file_label, fps, timestamp):
+        self.window_name = window_name
+        self.path = RECORD_OUTPUT_DIR / f"track1_{file_label}_{timestamp}.mp4"
+        self.fps = float(fps)
+        self.writer = None
+        self.size = None
+        self.enabled = True
+
+    def _open(self, frame):
+        RECORD_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        height, width = frame.shape[:2]
+        width -= width % 2
+        height -= height % 2
+        self.size = (width, height)
+        fourcc = cv2.VideoWriter_fourcc(*RECORD_CODEC)
+        self.writer = cv2.VideoWriter(str(self.path), fourcc, self.fps, self.size)
+
+        if not self.writer.isOpened():
+            self.writer.release()
+            self.writer = None
+            self.enabled = False
+            print(f"Warning: nao consegui abrir a gravacao de {self.window_name}: {self.path}")
+            return
+
+        print(f"A gravar {self.window_name} em {self.path}")
+
+    def write(self, frame):
+        if not self.enabled or frame is None:
+            return
+
+        if self.writer is None:
+            self._open(frame)
+            if self.writer is None:
+                return
+
+        width, height = self.size
+        if frame.shape[1] != width or frame.shape[0] != height:
+            frame = cv2.resize(frame, self.size)
+
+        self.writer.write(frame)
+
+    def release(self):
+        if self.writer is not None:
+            self.writer.release()
+            self.writer = None
+            print(f"Gravacao {self.window_name} guardada em {self.path}")
+
 
 #Process the frame
 #Parameters: Frame to process
@@ -810,13 +882,37 @@ def save_blue_hsv_to_shared_config(lower, upper):
         after_name="BLUE_HSV_LOWER",
     )
     SHARED_CONFIG_PATH.write_text(text, encoding="utf-8")
-    print(f"HSV azul guardado em {SHARED_CONFIG_PATH.name}.")
+    print(f"Blue HSV saved to {SHARED_CONFIG_PATH.name}.")
+
+
+def save_frame_pdf(frame, filename_prefix, title):
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    pdf_path = Path(__file__).with_name(f"{filename_prefix}_{timestamp}.pdf")
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    height, width = rgb_frame.shape[:2]
+    fig_width = max(6.0, width / 120.0)
+    fig_height = max(4.0, height / 120.0)
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    ax.imshow(rgb_frame)
+    ax.set_title(title, fontsize=10)
+    ax.axis("off")
+    fig.tight_layout(pad=0.2)
+    fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
+    plt.close(fig)
+    print(f"{title} saved to {pdf_path}.")
+
+
+def save_tracking_frame_pdf(frame):
+    if frame_height > 0 and frame.shape[0] > frame_height:
+        frame = frame[:frame_height, :]
+    save_frame_pdf(frame, "tracking_frame", "Tracking frame")
 
 
 def calibrate_blue_color(cap):
     global LOWER_BLUE, UPPER_BLUE
 
-    window_name = "Calibrar azul"
+    window_name = "Blue calibration"
 
     def _nothing(_value):
         pass
@@ -829,8 +925,8 @@ def calibrate_blue_color(cap):
     cv2.createTrackbar("V min", window_name, int(LOWER_BLUE[2]), 255, _nothing)
     cv2.createTrackbar("V max", window_name, int(UPPER_BLUE[2]), 255, _nothing)
 
-    print("Calibracao azul: ajusta os seletores HSV ate a mascara apanhar so o carro.")
-    print("Enter/Espaco confirma os valores. Q sai.")
+    print("Blue calibration: adjust the HSV controls until the mask captures only the car.")
+    print("Enter/Space confirms the values. Q exits.")
 
     while True:
         ret, frame = cap.read()
@@ -861,17 +957,6 @@ def calibrate_blue_color(cap):
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         masked = cv2.bitwise_and(frame, frame, mask=mask)
         preview = np.hstack((frame, masked))
-
-        cv2.putText(
-            preview,
-            "Original | Mascara HSV    Enter/Espaco: confirmar | Q: sair",
-            (10, 25),
-            font,
-            fontScale,
-            (255, 255, 255),
-            thickness,
-            cv2.LINE_AA,
-        )
         cv2.imshow(window_name, preview)
 
         key = cv2.waitKey(1) & 0xFF
@@ -886,7 +971,7 @@ def calibrate_blue_color(cap):
             UPPER_BLUE = upper
             save_blue_hsv_to_shared_config(LOWER_BLUE, UPPER_BLUE)
             cv2.destroyWindow(window_name)
-            print(f"Azul calibrado: lower={LOWER_BLUE.tolist()} upper={UPPER_BLUE.tolist()}")
+            print(f"Blue calibrated: lower={LOWER_BLUE.tolist()} upper={UPPER_BLUE.tolist()}")
             return
 
 
@@ -1068,9 +1153,11 @@ def carcentre(car_contour, track_contour, draw_flag=0, img=None):
 
 #View specific frames
 #Parameters: name of window and frame to be displayed
-def show(name, frame):
+def show(name, frame, recorder=None):
 
     cv2.imshow(name, frame)
+    if recorder is not None:
+        recorder.write(frame)
     return cv2.waitKey(1) & 0xFF
 
 #check if the function worked
@@ -1097,6 +1184,8 @@ def main():
     #Open the camera
     cap = cv2.VideoCapture(0, cv2.CAP_MSMF)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    live_recorder = None
+    tracking_recorder = None
     frame_counter = 0
     ret, frame = cap.read()
     if not ret:
@@ -1158,9 +1247,16 @@ def main():
     if red is None:
         print("Warning: Red overlay not loaded. Skipping overlay functionality.")
 
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    recording_fps = get_recording_fps(cap)
+    live_recorder = WindowRecorder("Live", "live", recording_fps, timestamp)
+    tracking_recorder = WindowRecorder("Tracking", "tracking", recording_fps, timestamp)
+
     cv2.namedWindow("Tracking")
     cv2.setMouseCallback("Tracking", edit_control_points)
     print("Editor: arrasta os pontos do caminho/barreiras ou os obstaculos na janela Tracking e carrega em S para guardar.")
+    print("Tracking: carrega em Enter para guardar o frame atual em PDF.")
+    last_tracking_frame = None
 
     #Tracking the car
     while True:
@@ -1173,9 +1269,10 @@ def main():
         #Process each frame
         frame = process_frame(frame)
         cv2.imshow("Live", frame)
+        live_recorder.write(frame)
 
         key = cv2.waitKey(10) & 0xFF
-        if handle_tracking_key(key):
+        if handle_tracking_key(key, last_tracking_frame):
             break
 
         #Get car contour
@@ -1187,8 +1284,9 @@ def main():
         draw_obstacles(display_frame)
 
         if car_contour is None:
-            key = show("Tracking", display_frame)
-            if handle_tracking_key(key):
+            last_tracking_frame = display_frame
+            key = show("Tracking", display_frame, tracking_recorder)
+            if handle_tracking_key(key, last_tracking_frame):
                 break
             continue
 
@@ -1212,12 +1310,18 @@ def main():
                 f"BEST:{best_lap_time:.2f}s"
             ]
 
+            last_tracking_frame = img.copy()
+
             #Display border and lap info
             img = apply_border(img, phrases)
-            key = show("Tracking", img)
-            if handle_tracking_key(key):
+            key = show("Tracking", img, tracking_recorder)
+            if handle_tracking_key(key, last_tracking_frame):
                 break
 
+    if live_recorder is not None:
+        live_recorder.release()
+    if tracking_recorder is not None:
+        tracking_recorder.release()
     cap.release()
     sock.close()
     cv2.destroyAllWindows()

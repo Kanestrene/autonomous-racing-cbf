@@ -8,6 +8,7 @@ from controller import build_spline_path, omega_to_delta, rate_limit, wrap_to_pi
 
 
 BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_OBSTACLE_PATH_OFFSET_M = 5.0
 
 DEFAULT_BASELINE_PARAMS = {
     "class_k_p": 3.0,
@@ -77,25 +78,46 @@ DEFAULT_WAYPOINTS = [
     (12.0, 2.0),
     (10.8, 2.0),
     (9.6, 2.0),
-    (8.4, 4.0),
-    (7.2, 4.0),
+    (8.4, 2.0),
+    (7.2, 2.0),
     (6.0, 2.0),
     (4.0, 2.5),
     (3.0, 3.0),
 ]
 
 
-def build_problem(ds=0.01, variation_id=0):
+def build_problem(
+    ds=0.01,
+    variation_id=0,
+    obstacle_path_offset_m=DEFAULT_OBSTACLE_PATH_OFFSET_M,
+):
     px, py, pyaw, s = build_spline_path(DEFAULT_WAYPOINTS, ds=ds)
-    obstacles = make_obstacles(px, py, pyaw, variation_id=variation_id)
+    obstacles = make_obstacles(
+        px,
+        py,
+        pyaw,
+        variation_id=variation_id,
+        path_offset_m=obstacle_path_offset_m,
+    )
     inner_bar = np.loadtxt(BASE_DIR / "barreira_suavizada_interna.txt")
     outer_bar = np.loadtxt(BASE_DIR / "barreira_suavizada_externa.txt")
     return px, py, pyaw, s, obstacles, inner_bar, outer_bar
 
 
-def make_obstacles(px, py, pyaw, n_obs=5, variation_id=0):
+def shift_path_indices(px, py, idxs, offset_m):
+    path_s = np.concatenate(([0.0], np.cumsum(np.hypot(np.diff(px), np.diff(py)))))
+    path_length = float(path_s[-1])
+    if path_length <= 0.0:
+        return np.asarray(idxs, dtype=int)
+
+    shifted_s = np.mod(path_s[idxs] + float(offset_m), path_length)
+    return np.searchsorted(path_s, shifted_s, side="left")
+
+
+def make_obstacles(px, py, pyaw, n_obs=5, variation_id=0, path_offset_m=0.0):
     n_path = len(px)
     idxs = np.linspace(0, n_path - 1, n_obs + 2, dtype=int)[1:-1]
+    idxs = shift_path_indices(px, py, idxs, path_offset_m)
 
     obstacles = []
     for k, idx in enumerate(idxs):

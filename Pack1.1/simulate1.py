@@ -17,9 +17,10 @@ from controller import (
 def simulate():
     script_dir = Path(__file__).resolve().parent
     pdf_path = script_dir / "simulate1_volta_completa.pdf"
-    linear_speed_pdf_path = script_dir / "simulate1_velocidade_linear_pp_qp.pdf"
-    angular_speed_pdf_path = script_dir / "simulate1_velocidade_angular_pp_qp.pdf"
-    cte_pdf_path = script_dir / "simulate1_erro_lateral.pdf"
+    linear_speed_pdf_path = script_dir / "iHOCBF_velocidade_linear_pp_qp.pdf"
+    angular_speed_pdf_path = script_dir / "iHOCBF_velocidade_angular_pp_qp.pdf"
+    delta_pdf_path = script_dir / "iHOCBF_delta_pp_qp.pdf"
+    cte_pdf_path = script_dir / "iHOCBF_erro_lateral.pdf"
 
     waypoints = [
         (3.0, 3.0),
@@ -76,8 +77,8 @@ def simulate():
         (12.0, 2.0),
         (10.8, 2.0),
         (9.6, 2.0),
-        (8.4, 4.0),
-        (7.2, 4.0),
+        (8.4, 2.0),
+        (7.2, 2.0),
         (6.0, 2.0),
         (4.0, 2.5),
         (3.0, 3.0),
@@ -132,6 +133,7 @@ def simulate():
     hx, hy, ctes = [], [], []
     v_pp_hist, v_qp_hist = [], []
     w_pp_hist, w_qp_hist = [], []
+    delta_pp_hist, delta_qp_hist = [], []
     lap_progress_idx = 0.0
     prev_near_idx = None
     stop_requested = False
@@ -209,41 +211,62 @@ def simulate():
 
     def show_final_plots():
         saved_paths = []
+        line_width = 2.2
+        title_fontsize = 18
+        label_fontsize = 16
+        tick_fontsize = 14
+        legend_fontsize = 15
 
         if v_pp_hist:
             t = np.arange(len(v_pp_hist)) * dt
 
             fig_v, ax_v = plt.subplots()
-            ax_v.plot(t, v_pp_hist, label="PP")
-            ax_v.plot(t, v_qp_hist, label="QP")
-            ax_v.set_title("Velocidade linear: PP vs QP")
-            ax_v.set_xlabel("Tempo [s]")
-            ax_v.set_ylabel("v [m/s]")
-            ax_v.grid(True)
-            ax_v.legend()
+            ax_v.plot(t, v_pp_hist, label="Controller", linewidth=line_width)
+            ax_v.plot(t, v_qp_hist, label="QP", linewidth=line_width)
+            ax_v.set_title("Linear velocity: Controller vs QP", fontsize=title_fontsize)
+            ax_v.set_xlabel("Time [s]", fontsize=label_fontsize)
+            ax_v.set_ylabel("v [m/s]", fontsize=label_fontsize)
+            ax_v.grid(False)
+            ax_v.tick_params(axis="both", labelsize=tick_fontsize)
+            ax_v.legend(fontsize=legend_fontsize)
             fig_v.tight_layout()
             fig_v.savefig(linear_speed_pdf_path, format="pdf", bbox_inches="tight")
             saved_paths.append(linear_speed_pdf_path)
 
             fig_w, ax_w = plt.subplots()
-            ax_w.plot(t, w_pp_hist, label="PP")
-            ax_w.plot(t, w_qp_hist, label="QP")
-            ax_w.set_title("Velocidade angular: PP vs QP")
-            ax_w.set_xlabel("Tempo [s]")
-            ax_w.set_ylabel("w [rad/s]")
-            ax_w.grid(True)
-            ax_w.legend()
+            ax_w.plot(t, w_pp_hist, label="Controller", linewidth=line_width)
+            ax_w.plot(t, w_qp_hist, label="QP", linewidth=line_width)
+            ax_w.set_title("Angular velocity: Controller vs QP", fontsize=title_fontsize)
+            ax_w.set_xlabel("Time [s]", fontsize=label_fontsize)
+            ax_w.set_ylabel("w [rad/s]", fontsize=label_fontsize)
+            ax_w.grid(False)
+            ax_w.tick_params(axis="both", labelsize=tick_fontsize)
+            ax_w.legend(fontsize=legend_fontsize)
             fig_w.tight_layout()
             fig_w.savefig(angular_speed_pdf_path, format="pdf", bbox_inches="tight")
             saved_paths.append(angular_speed_pdf_path)
 
+            fig_delta, ax_delta = plt.subplots()
+            ax_delta.plot(t, delta_pp_hist, label="Controller", linewidth=line_width)
+            ax_delta.plot(t, delta_qp_hist, label="QP", linewidth=line_width)
+            ax_delta.set_title("Steering angle: Controller vs QP", fontsize=title_fontsize)
+            ax_delta.set_xlabel("Time [s]", fontsize=label_fontsize)
+            ax_delta.set_ylabel("delta [rad]", fontsize=label_fontsize)
+            ax_delta.grid(False)
+            ax_delta.tick_params(axis="both", labelsize=tick_fontsize)
+            ax_delta.legend(fontsize=legend_fontsize)
+            fig_delta.tight_layout()
+            fig_delta.savefig(delta_pdf_path, format="pdf", bbox_inches="tight")
+            saved_paths.append(delta_pdf_path)
+
         if ctes:
             fig_cte, ax_cte = plt.subplots()
-            ax_cte.plot(ctes)
-            ax_cte.set_title("Erro lateral (aprox) - Pure Pursuit")
-            ax_cte.set_xlabel("Passo")
-            ax_cte.set_ylabel("cte~ [m]")
-            ax_cte.grid(True)
+            ax_cte.plot(ctes, linewidth=line_width)
+            ax_cte.set_title("Lateral error (approx) - Pure Pursuit", fontsize=title_fontsize)
+            ax_cte.set_xlabel("Step", fontsize=label_fontsize)
+            ax_cte.set_ylabel("cte~ [m]", fontsize=label_fontsize)
+            ax_cte.grid(False)
+            ax_cte.tick_params(axis="both", labelsize=tick_fontsize)
             fig_cte.tight_layout()
             fig_cte.savefig(cte_pdf_path, format="pdf", bbox_inches="tight")
             saved_paths.append(cte_pdf_path)
@@ -273,6 +296,8 @@ def simulate():
             prev_near_idx = last_near
 
         w_cmd = np.clip(w_cmd, -w_max, w_max)
+        delta_pp = omega_to_delta(w_cmd, v_cmd, L, v_min=0.2)
+        delta_pp = np.clip(delta_pp, -delta_max, delta_max)
 
         nu_nom = np.clip((v_cmd - v) / dt, -a_max, a_max)
 
@@ -282,11 +307,11 @@ def simulate():
             obstacles=obstacles,
             ellipse_ab=(a_ell, b_ell),
             margin=margin,
-            alpha=7,
+            alpha=3,  #7
             barrier_margin=barrier_margin,
             barrier_alpha=barrier_alpha,
             dt=dt,
-            W=(15, 1.0),
+            W=(1, 1.0), #15, 1
             nu_bounds=(-a_max, a_max),
             v_bounds=(0.0, 2.0),
             w_bounds=(-w_max, w_max),
@@ -307,7 +332,10 @@ def simulate():
         else:
             delta_cmd = 0.0
         delta_cmd = np.clip(delta_cmd, -delta_max, delta_max)
-        delta = rate_limit(delta_cmd, delta, du_max=delta_rate_max * dt)
+        #delta = rate_limit(delta_cmd, delta, du_max=delta_rate_max * dt)
+        delta = delta_cmd
+        delta_pp_hist.append(delta_pp)
+        delta_qp_hist.append(delta)
 
         x += v_next * np.cos(yaw) * dt
         y += v_next * np.sin(yaw) * dt

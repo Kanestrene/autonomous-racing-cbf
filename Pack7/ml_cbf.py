@@ -26,8 +26,8 @@ DEFAULT_MODEL_PATH = Path(__file__).resolve().parent / "ml_cbf_pq_model.npz"
 # alpha_1(h) = p_1 sign(h)|h|^q_1. Since Pack7 uses a first-order CBF, m = 1.
 PARAM_BOUNDS = np.array(
     [
-        [0.1, 15.0],       # p_1
-        [0.3, 2.5],        # q_1
+        [0.5, 15],       # p_1
+        [0.1, 2.5],        # q_1
     ],
     dtype=float,
 )
@@ -356,7 +356,7 @@ class MLCBFParameterModel:
     @staticmethod
     def _beta_feasibility(h):
         # Extended class K function used in the FGO feasibility constraint.
-        return np.sign(h) * abs(h)
+        return np.sign(h) * abs(3*h)
 
     def _fgo_search(self, seed=0, random_samples=2500, iterations=10, population=80):
         rng = np.random.default_rng(seed)
