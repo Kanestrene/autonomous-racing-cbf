@@ -648,14 +648,17 @@ def draw_robot_ellipse(img, x_m, y_m, theta_rad, color):
     cv2.ellipse(img, center, axes, angle_deg, 0, 360, color, 2, cv2.LINE_AA)
 
 
-def build_udp_payload(frame_counter, x_px, y_px, x_m, y_m):
+def build_udp_payload(frame_counter, x_px, y_px, x_m, y_m, timing_ms=None):
     theta_rad = float(raw_theta_rad)
     theta_deg = float(np.degrees(theta_rad))
     speed_m_s = float(raw_speed_m_s)
+    t_wall = time.time()
 
     return {
-        "t": time.time(),
+        "t": t_wall,
+        "t_wall": t_wall,
         "frame": int(frame_counter),
+        "timing_ms": timing_ms or {},
         "tracks": [{
             "id": int(TRACK_ID),
             "x_px": float(x_px),
@@ -1260,22 +1263,28 @@ def main():
 
     #Tracking the car
     while True:
+        t_loop = time.perf_counter()
 
         ret, frame = cap.read()
+        t_capture_done = time.perf_counter()
         if not ret:
             check(cap)
         frame_counter += 1
         
         #Process each frame
+        t_process_start = time.perf_counter()
         frame = process_frame(frame)
+        t_process_done = time.perf_counter()
         cv2.imshow("Live", frame)
         live_recorder.write(frame)
 
         key = cv2.waitKey(10) & 0xFF
+        t_display_done = time.perf_counter()
         if handle_tracking_key(key, last_tracking_frame):
             break
 
         #Get car contour
+        t_tracking_start = time.perf_counter()
         car_contour = carcontour(frame)
 
         display_frame = frame.copy()
@@ -1292,11 +1301,23 @@ def main():
 
         #Get car center
         x, y, img = carcentre(car_contour, contour, draw_flag=1, img=display_frame)
+        t_tracking_done = time.perf_counter()
 
         if img is not None:
             x_m, y_m = px_to_m(x, y)
             if SEND_UDP and np.isfinite(x_m) and np.isfinite(y_m):
-                payload = build_udp_payload(frame_counter, x, y, x_m, y_m)
+                timing_ms = {
+                    "image_acquisition": (t_capture_done - t_loop) * 1000.0,
+                    "image_processing": (
+                        (t_process_done - t_process_start)
+                        + (t_tracking_done - t_tracking_start)
+                    ) * 1000.0,
+                    "image_preprocess": (t_process_done - t_process_start) * 1000.0,
+                    "tracking_processing": (t_tracking_done - t_tracking_start) * 1000.0,
+                    "display": (t_display_done - t_process_done) * 1000.0,
+                    "vision_loop": (t_tracking_done - t_loop) * 1000.0,
+                }
+                payload = build_udp_payload(frame_counter, x, y, x_m, y_m, timing_ms=timing_ms)
                 sock.sendto(json.dumps(payload).encode("utf-8"), (PC_IP, PC_PORT))
 
             #Update best lap time

@@ -125,7 +125,7 @@ def cbf_qp_filter(u_nom, robot_state, obstacles,
 
     inner, outer = get_dense_barriers()
 
-    '''
+    
     G_barrier, h_barrier = cbf.cbf_rows_for_barriers(
         x, y, th,
         barrier_inner=inner,
@@ -136,7 +136,7 @@ def cbf_qp_filter(u_nom, robot_state, obstacles,
         alpha=alpha, #alpha
         max_segments=10
     )
-    '''
+    
     # bounds (box) em G u <= h
     vmin, vmax = v_bounds
     wmin, wmax = w_bounds
@@ -155,11 +155,11 @@ def cbf_qp_filter(u_nom, robot_state, obstacles,
     if G_obs.size != 0:
         G_parts.insert(0, G_obs)
         h_parts.insert(0, h_obs)
-    '''
+    
     if G_barrier.size != 0:
         G_parts.insert(-1, G_barrier)
         h_parts.insert(-1, h_barrier)
-    '''
+    
     G = np.vstack(G_parts)
     h = np.concatenate(h_parts)
 

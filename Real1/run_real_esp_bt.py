@@ -29,6 +29,8 @@ VISION_UDP_PORT = 5005
 VISION_TRACK_ID = 2
 ROUND_CORNER_RADIUS_M = 0.2
 ROUND_CORNER_SAMPLES = 24
+PRINT_TIMING = True
+TIMING_PRINT_EVERY = 0  # 1 = print every control loop
 
 
 # ============================================================
@@ -54,6 +56,10 @@ class VisionPoseReceiver:
         self.prev_x = None
         self.prev_y = None
         self.prev_t = None
+        self.frame_id = None
+        self.vision_timing_ms = {}
+        self.vision_timestamp_s = None
+        self.vision_timestamp_clock = "wall"
 
     def _select_track(self, tracks):
         for tr in tracks:
@@ -67,6 +73,8 @@ class VisionPoseReceiver:
         return tracks[0] if tracks else None
 
     def _process_packet(self, payload):
+        self._update_packet_metadata(payload)
+
         tracks = payload.get("tracks", [])
         tr = self._select_track(tracks)
 
@@ -99,6 +107,20 @@ class VisionPoseReceiver:
         self.prev_y = y
         self.prev_t = now
 
+    def _update_packet_metadata(self, payload):
+        self.frame_id = payload.get("frame", self.frame_id)
+
+        timing_ms = payload.get("timing_ms", {})
+        self.vision_timing_ms = timing_ms if isinstance(timing_ms, dict) else {}
+
+        if "t_wall" in payload:
+            self.vision_timestamp_s = float(payload["t_wall"])
+            self.vision_timestamp_clock = "wall"
+        elif "t" in payload:
+            timestamp_s = float(payload["t"])
+            self.vision_timestamp_s = timestamp_s
+            self.vision_timestamp_clock = "wall" if timestamp_s > 1_000_000_000 else "perf"
+
     def get_state(self):
         got_new_packet = False
 
@@ -122,6 +144,21 @@ class VisionPoseReceiver:
             self.v = 0.0
 
         return self.x, self.y, self.theta, self.v
+
+    def get_timing(self):
+        age_ms = None
+        if self.vision_timestamp_s is not None:
+            if self.vision_timestamp_clock == "perf":
+                now = time.perf_counter()
+            else:
+                now = time.time()
+            age_ms = max(0.0, (now - self.vision_timestamp_s) * 1000.0)
+
+        return {
+            "frame": self.frame_id,
+            "vision_age": age_ms,
+            **self.vision_timing_ms,
+        }
 
 
 _vision_receiver = VisionPoseReceiver()
@@ -181,6 +218,67 @@ def get_robot_state():
     Valores vindos diretamente do payload UDP do cam.py.
     """
     return _vision_receiver.get_state()
+
+
+def get_vision_timing():
+    return _vision_receiver.get_timing()
+
+
+def format_ms(value):
+    if value is None:
+        return "n/a"
+    return f"{float(value):.2f} ms"
+
+
+class TimingAverages:
+    def __init__(self):
+        self.sums = {}
+        self.counts = {}
+
+    def add(self, name, value):
+        if value is None:
+            return
+
+        value = float(value)
+        if not np.isfinite(value):
+            return
+
+        self.sums[name] = self.sums.get(name, 0.0) + value
+        self.counts[name] = self.counts.get(name, 0) + 1
+
+    def add_many(self, values):
+        for name, value in values.items():
+            self.add(name, value)
+
+    def average(self, name):
+        count = self.counts.get(name, 0)
+        if count <= 0:
+            return None
+        return self.sums[name] / count
+
+    def has_samples(self):
+        return any(count > 0 for count in self.counts.values())
+
+
+def print_timing_averages(timing_stats):
+    if not timing_stats.has_samples():
+        print("Timing average | sem amostras validas.")
+        return
+
+    print(
+        "Timing average | "
+        f"samples={max(timing_stats.counts.values())} | "
+        f"Image acquisition: {format_ms(timing_stats.average('image_acquisition'))} | "
+        f"Image processing: {format_ms(timing_stats.average('image_processing'))} | "
+        f"Vision age: {format_ms(timing_stats.average('vision_age'))} | "
+        f"State acquisition UDP: {format_ms(timing_stats.average('state_acquisition_udp'))} | "
+        f"Pure pursuit: {format_ms(timing_stats.average('pure_pursuit'))} | "
+        f"QP solution: {format_ms(timing_stats.average('qp_solution'))} | "
+        f"Steering conversion: {format_ms(timing_stats.average('steering_conversion'))} | "
+        f"Communication BLE: {format_ms(timing_stats.average('communication_ble'))} | "
+        f"Total control loop: {format_ms(timing_stats.average('total_control_loop'))} | "
+        f"Frequency: {timing_stats.average('frequency_hz'):.2f} Hz"
+    )
 
 
 def build_rounded_polyline(points, corner_radius=0.08, corner_samples=10, closed=True):
@@ -308,7 +406,7 @@ async def run_real():
     v_ref = 0.3 #0.3
     L0 = 0.35
     kv = 0.0
-    k_pp = 5
+    k_pp = 5 #5
 
     v_max = 0.47
     a_max = 2.0
@@ -337,11 +435,15 @@ async def run_real():
         f"yaw={yaw:.3f} rad, v={v:.3f} m/s"
     )
 
+    loop_counter = 0
+    timing_stats = TimingAverages()
+
     try:
         while True:
-            t0 = time.time()
+            t_loop = time.perf_counter()
 
             x, y, yaw, v = get_robot_state()
+            t_state = time.perf_counter()
 
             Ld = L0 + kv * abs(v)
             state = (x, y, yaw, v)
@@ -361,6 +463,7 @@ async def run_real():
             #w_max = abs(v_cmd) * kappa_max
             w_max = abs(v_max) * kappa_max
             w_cmd = np.clip(w_cmd, -w_max, w_max)
+            t_pp = time.perf_counter()
            
             # CBF
             v_safe, w_safe = qp.cbf_qp_filter(
@@ -377,6 +480,7 @@ async def run_real():
             )
 
             v_safe = np.clip(v_safe, -v_max, v_max)
+            t_qp = time.perf_counter()
 
             kappa_max = np.tan(delta_max) / L
             w_max_speed = abs(v_safe) * kappa_max
@@ -401,8 +505,10 @@ async def run_real():
                 delta_send = delta
             
             v_safe = v_safe - (delta**2)
+            t_steering = time.perf_counter()
 
             esp32_msg = await esp32.send_cmd(v=v_safe, delta= delta)
+            t_ble = time.perf_counter()
             #esp32_msg = await esp32.send_cmd(v=0.2, delta=3.0)
 
             print(
@@ -414,13 +520,48 @@ async def run_real():
                 f"ble='{esp32_msg}'"
             )
 
-            elapsed = time.time() - t0
+            loop_counter += 1
+            vision_timing = get_vision_timing()
+            control_total_s = t_ble - t_loop
+            frequency_hz = 1.0 / control_total_s if control_total_s > 0 else 0.0
+            timing_sample = {
+                "image_acquisition": vision_timing.get("image_acquisition"),
+                "image_processing": vision_timing.get("image_processing"),
+                "vision_age": vision_timing.get("vision_age"),
+                "state_acquisition_udp": (t_state - t_loop) * 1000.0,
+                "pure_pursuit": (t_pp - t_state) * 1000.0,
+                "qp_solution": (t_qp - t_pp) * 1000.0,
+                "steering_conversion": (t_steering - t_qp) * 1000.0,
+                "communication_ble": (t_ble - t_steering) * 1000.0,
+                "total_control_loop": control_total_s * 1000.0,
+                "frequency_hz": frequency_hz,
+            }
+            timing_stats.add_many(timing_sample)
+
+            if PRINT_TIMING and loop_counter % TIMING_PRINT_EVERY == 0:
+                print(
+                    "Timing | "
+                    f"frame={vision_timing.get('frame')} | "
+                    f"Image acquisition: {format_ms(timing_sample['image_acquisition'])} | "
+                    f"Image processing: {format_ms(timing_sample['image_processing'])} | "
+                    f"Vision age: {format_ms(timing_sample['vision_age'])} | "
+                    f"State acquisition UDP: {format_ms(timing_sample['state_acquisition_udp'])} | "
+                    f"Pure pursuit: {format_ms(timing_sample['pure_pursuit'])} | "
+                    f"QP solution: {format_ms(timing_sample['qp_solution'])} | "
+                    f"Steering conversion: {format_ms(timing_sample['steering_conversion'])} | "
+                    f"Communication BLE: {format_ms(timing_sample['communication_ble'])} | "
+                    f"Total control loop: {format_ms(timing_sample['total_control_loop'])} | "
+                    f"Frequency: {timing_sample['frequency_hz']:.2f} Hz"
+                )
+
+            elapsed = time.perf_counter() - t_loop
             await asyncio.sleep(max(0.0, dt - elapsed))
 
     except KeyboardInterrupt:
         print("Parado pelo utilizador")
 
     finally:
+        print_timing_averages(timing_stats)
         await esp32.stop()
 
 

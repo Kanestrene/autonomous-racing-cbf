@@ -763,13 +763,16 @@ print("Teclas: q=sair, r=reset stats, s=guardar stats")
 # =========================
 try:
     while True:
-        t = time.perf_counter()
+        t_loop = time.perf_counter()
+        t = t_loop
         dt_frame = clamp_dt(t - t_prev)
         t_prev = t
         frame_counter += 1
         stats["total_frames_count"] += 1
 
+        t_capture_start = time.perf_counter()
         frame = camera.capture_bgr()
+        t_capture_done = time.perf_counter()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # 0) deteção visual: blobs + YOLO
@@ -967,9 +970,16 @@ try:
         update_detect_map_from_tags(stats, tags)
 
         # 11) output
+        t_processing_done = time.perf_counter()
         payload = {
             "t": t,
+            "t_wall": time.time(),
             "frame": frame_counter,
+            "timing_ms": {
+                "image_acquisition": (t_capture_done - t_capture_start) * 1000.0,
+                "image_processing": (t_processing_done - t_capture_done) * 1000.0,
+                "vision_loop": (t_processing_done - t_loop) * 1000.0,
+            },
             "tracks": []
         }
 

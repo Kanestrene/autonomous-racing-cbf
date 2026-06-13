@@ -8,7 +8,7 @@ import numpy as np
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_MODEL_PATH = BASE_DIR / "ml_cbf_pq_model2.npz"
+DEFAULT_MODEL_PATH = BASE_DIR / "ml_cbf_pq_model3.npz"
 FIGSIZE_3D = (10.8, 7.3)
 FIGSIZE_2D = (12.2, 4.8)
 SCORE_MIN = -100.0

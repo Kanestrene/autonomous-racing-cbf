@@ -13,7 +13,7 @@ const float v_max = 0.47f;
 
 float v_cmd = 0.0f, d_cmd = 0.0f;
 unsigned long lastPacketTime = 0;
-const unsigned long timeoutMs = 300;
+const unsigned long timeoutMs = 1000;
 
 unsigned long lastLoopTime = 0;
 const unsigned long loopPeriod = 20;
@@ -37,7 +37,7 @@ float grausParaRadianos(float graus) {
   return graus * PI / 180.0f;
 }
 
-const float delta_max = grausParaRadianos(20.0f);
+const float delta_max = grausParaRadianos(13.0f);
 
 int velocity_to_pwm(float v) {
   float ratio = constrain(fabs(v) / v_max, 0.0f, 1.0f);

@@ -95,15 +95,17 @@ for name, data in cars_config.items():
     px, py, pyaw, s = build_spline_path(waypoints, ds=0.01)
 
     start = data.get("start", [waypoints[0][0], waypoints[0][1], 0.0])
+    start_idx = int(np.argmin((px - start[0]) ** 2 + (py - start[1]) ** 2))
+    start_yaw = float(wrap_to_pi(pyaw[start_idx]))
 
     cars.append({
         "name": name,
         "x": start[0],
         "y": start[1],
-        "yaw": start[2],
+        "yaw": start_yaw,
         "v": 0.0,
         "delta": 0.0,
-        "last_near": 0,
+        "last_near": start_idx,
         "px": px,
         "py": py,
         "pyaw": pyaw,
@@ -133,7 +135,7 @@ def should_consider_other(car, other, d_act=3.0):
 # parâmetros "leader" vs "follower"
 QP_PARAMS = {
     "leader":   {"W": (2000.0, 1.0), "alpha": 3.0, "lookahead_l": 0.10},
-    "follower": {"W": (200.0, 1.0), "alpha": 3.0, "lookahead_l": 0.10},
+    "follower": {"W": (2000.0, 1.0), "alpha": 3.0, "lookahead_l": 0.10},
 }
 
 def simulate():
@@ -159,15 +161,16 @@ def simulate():
 
             ox = x_path + side * offset * nx
             oy = y_path + side * offset * ny
-
+            '''
             obstacles.append({
                 "x": ox,
                 "y": oy,
                 "r": 0.35,
             })
+            '''
 
     dt = 0.02
-    T = 50.0
+    T = 120.0
     steps = int(T / dt)
 
     # Pure Pursuit
@@ -176,10 +179,10 @@ def simulate():
 
     # Limites
     w_max = 2.5
-    a_max = 2.0
+    a_max = 2.0 #2
 
     # Elipse do robô
-    a_ell, b_ell = 0.40, 0.30 #0.60, 0.50
+    a_ell, b_ell = 0.30, 0.20 #0.60, 0.50
     margin = 0.05
 
     # Parâmetros bicycle/servo
@@ -196,18 +199,77 @@ def simulate():
     # históricos por carro
     for car in cars:
         car["hx"], car["hy"], car["ctes"] = [], [], []
+        car["lap_progress_idx"] = 0.0
+        car["prev_near_idx"] = None
+        car["finished"] = False
+        car["finish_step"] = None
 
     def car_as_obstacle(car, r=0.45):
         return {"x": car["x"], "y": car["y"], "r": r}
 
     plt.ion()
     fig, ax = plt.subplots(figsize=(9, 5))
+    pdf_save_count = 0
+
+    def next_pdf_path():
+        nonlocal pdf_save_count
+        while True:
+            pdf_save_count += 1
+            pdf_path = os.path.join(BASE_DIR, f"simulate3_pista_{pdf_save_count:03d}.pdf")
+            if not os.path.exists(pdf_path):
+                return pdf_path
+
+    def save_pdf_without_title_legend(pdf_path):
+        title = ax.get_title()
+        legend = ax.get_legend()
+        legend_visible = legend.get_visible() if legend is not None else None
+        axis_was_on = ax.axison
+
+        ax.set_title("")
+        if legend is not None:
+            legend.set_visible(False)
+        ax.set_axis_off()
+
+        try:
+            fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
+        finally:
+            ax.set_title(title)
+            if legend is not None:
+                legend.set_visible(legend_visible)
+            if axis_was_on:
+                ax.set_axis_on()
+            else:
+                ax.set_axis_off()
+            fig.canvas.draw_idle()
+
+    def on_key_press(event):
+        if event.key in ("enter", "return"):
+            pdf_path = next_pdf_path()
+            save_pdf_without_title_legend(pdf_path)
+            print(f"Pista guardada em PDF: {pdf_path}")
+
+    fig.canvas.mpl_connect("key_press_event", on_key_press)
 
     for k in range(steps):
 
         # atualiza todos os carros
         for i, car in enumerate(cars):
             px, py = car["px"], car["py"]
+
+            if car["finished"]:
+                Ld = L0 + kv * abs(car["v"])
+                cte = car["ctes"][-1] if car["ctes"] else 0.0
+                target_idx = int(car["last_near"]) % len(px)
+                car["v"] = 0.0
+                car["delta"] = 0.0
+                car["hx"].append(car["x"])
+                car["hy"].append(car["y"])
+                car["ctes"].append(cte)
+                car["_plot"] = {
+                    "Ld": Ld, "target_idx": target_idx,
+                    "v_safe": 0.0, "w_safe": 0.0, "cte": cte, "role": "finished"
+                }
+                continue
 
             Ld = L0 + kv * abs(car["v"])
             state = (car["x"], car["y"], car["yaw"], car["v"])
@@ -218,6 +280,19 @@ def simulate():
                 Ld=Ld,
                 v_ref=car["v_ref"],   # <- usa v_ref do YAML
             )
+
+            n_path = len(px)
+            if car["prev_near_idx"] is None:
+                car["prev_near_idx"] = car["last_near"]
+            else:
+                delta_idx = car["last_near"] - car["prev_near_idx"]
+                if delta_idx < -n_path / 2:
+                    delta_idx += n_path
+                elif delta_idx > n_path / 2:
+                    delta_idx -= n_path
+
+                car["lap_progress_idx"] += max(0.0, float(delta_idx))
+                car["prev_near_idx"] = car["last_near"]
 
             w_cmd = np.clip(w_cmd, -w_max, w_max)
 
@@ -260,7 +335,7 @@ def simulate():
                 lookahead_l=p["lookahead_l"],
                 alpha=p["alpha"],
                 W=p["W"],
-                v_bounds=(0.0, 2.0),
+                v_bounds=(0.0, 10.0),
                 w_bounds=(-w_max, w_max),
             )
 
@@ -278,6 +353,16 @@ def simulate():
             car["y"] += v_safe * np.sin(car["yaw"]) * dt
             car["yaw"] = wrap_to_pi(car["yaw"] + (v_safe / L) * np.tan(car["delta"]) * dt)
 
+            if car["lap_progress_idx"] >= (n_path - 1):
+                car["finished"] = True
+                car["finish_step"] = k
+                car["v"] = 0.0
+                car["delta"] = 0.0
+                v_safe = 0.0
+                w_safe = 0.0
+                role = "finished"
+                print(f"{car['name']} chegou ao fim da pista e ficou parado.")
+
             # guarda histórico do carro
             car["hx"].append(car["x"])
             car["hy"].append(car["y"])
@@ -289,8 +374,10 @@ def simulate():
                 "v_safe": v_safe, "w_safe": w_safe, "cte": cte, "role": role
             }
 
+        all_finished = bool(cars) and all(car["finished"] for car in cars)
+
         # DESENHO (a cada 5 passos)
-        if k % 5 == 0:
+        if k % 5 == 0 or all_finished:
             ax.clear()
 
             # barreiras
@@ -333,17 +420,15 @@ def simulate():
                          0.4*np.cos(car["yaw"]), 0.4*np.sin(car["yaw"]),
                          head_width=0.15)
 
-                # lookahead target
-                ti = car["_plot"]["target_idx"]
-                ax.plot(px[ti], py[ti], "x", markersize=8)
-                ax.add_patch(Circle((car["x"], car["y"]), car["_plot"]["Ld"], fill=False))
-
-                
             ax.set_aspect("equal", "box")
             ax.grid(False)
             ax.set_title("Multi-carro: Pure Pursuit + CBF-QP (caminho do simulate1)")
             ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5))
             plt.pause(0.001)
+
+        if all_finished:
+            print("Todos os carros chegaram ao fim da pista. Simulação encerrada.")
+            break
 
     plt.ioff()
 

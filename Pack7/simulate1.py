@@ -230,8 +230,8 @@ def simulate():
 
     a_ell, b_ell = 0.30, 0.20
     margin = 0.05
-    class_k_p = 7 #3 #6.76 #5.98
-    class_k_q = 1 #1 #1.03 #1.13
+    class_k_p = 5.26 #3 #6.76 #5.98
+    class_k_q = 0.58 #1 #1.03 #1.13
     alpha = 3.0
     params_suffix = f"p{class_k_p:g}_q{class_k_q:g}"
     pdf_path = script_dir / f"simulate1_volta_completa_{params_suffix}.pdf"
@@ -440,7 +440,7 @@ def simulate():
         w_nom = 0.0
 
         u_safe, clf_info = qp.cbf_clf_qp_filter(
-            u_nom=(v_nom, np.sign(w_safe)*2),
+            u_nom=(v_nom, w_nom),
             robot_state=(x, y, yaw),
             obstacles=obstacles,
             px=px,
@@ -450,7 +450,7 @@ def simulate():
             last_path_idx=last_near,
             ellipse_ab=(a_ell, b_ell),
             margin=margin,
-            lookahead_l=0.2,
+            lookahead_l=0.1,
             barrier_lookahead_l=0.1,
             alpha=alpha,
             class_k_p=class_k_p,
