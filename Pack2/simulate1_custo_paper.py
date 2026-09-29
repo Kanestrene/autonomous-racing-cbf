@@ -200,13 +200,13 @@ def save_track_only():
 
 def simulate():
     script_dir = Path(__file__).resolve().parent
-    pdf_path = script_dir / "simulate1_volta_completa.pdf"
-    linear_speed_pdf_path = script_dir / "simulate1_velocidade_linear_clf_qp.pdf"
-    angular_speed_pdf_path = script_dir / "simulate1_velocidade_angular_clf_qp.pdf"
-    delta_pdf_path = script_dir / "simulate1_delta_clf_qp.pdf"
-    cpu_pdf_path = script_dir / "simulate1_tempo_cpu.pdf"
-    qp_pdf_path = script_dir / "simulate1_tempo_qp.pdf"
-    lat_pdf_path = script_dir / "simulate1_erro_lateral.pdf"
+    pdf_path = script_dir / "simulate1_custo_paper_volta_completa.pdf"
+    linear_speed_pdf_path = script_dir / "simulate1_custo_paper_velocidade_linear.pdf"
+    angular_speed_pdf_path = script_dir / "simulate1_custo_paper_velocidade_angular.pdf"
+    delta_pdf_path = script_dir / "simulate1_custo_paper_delta.pdf"
+    cpu_pdf_path = script_dir / "simulate1_custo_paper_tempo_cpu.pdf"
+    qp_pdf_path = script_dir / "simulate1_custo_paper_tempo_qp.pdf"
+    lat_pdf_path = script_dir / "simulate1_custo_paper_erro_lateral.pdf"
 
     waypoints = WAYPOINTS
 
@@ -264,6 +264,7 @@ def simulate():
     seg_hint = {}  # janela de segmentos das barreiras (atualizada pelo QP)
     lat_err_hist = []
     lat_idx = 0
+    u_pre = np.array([0.0, 0.0])
     lap_progress_idx = 0.0
     prev_near_idx = None
     stop_requested = False
@@ -334,7 +335,7 @@ def simulate():
 
         if show_labels:
             ax.set_title(
-                f"CLF + CBF-QP | Ld={Ld:.2f} | v={v_safe:.2f} | "
+                f"CLF + CBF-QP (custo paper) | Ld={Ld:.2f} | v={v_safe:.2f} | "
                 f"w={w_safe:.2f} | cte~{cte:.3f} | "
                 f"QP={qp_time_hist[-1] * 1e3:.2f} ms"
             )
@@ -460,8 +461,8 @@ def simulate():
         delta_controller = np.clip(delta_controller, -delta_max, delta_max)
 
         t_ctrl0 = time.perf_counter()
-        u_safe, clf_info = qp.cbf_clf_qp_filter(
-            u_nom=(v_nom, w_nom),
+        u_safe, clf_info = qp.cbf_clf_qp_paper_cost(
+            u_pre=u_pre,
             robot_state=(x, y, yaw),
             obstacles=obstacles,
             px=px,
@@ -472,11 +473,15 @@ def simulate():
             ellipse_ab=(a_ell, b_ell),
             margin=margin,
             lookahead_l=0.1, #0.1
-            alpha=6, #5
-            eps_clf=7, #3
+            alpha=5, #5
+            eps_clf=6, #3
             q_clf=(1.0, 10.0, 1), #1 10 0.01
-            W=(100000.0, 1.0),
-            p_slack=5.0, #50
+            dt=dt,
+            H=(1.0, 1.0),      # paper: 1/2 u^T H u
+            Q=(10.0, 10.0),    # paper: (u-u_pre)^T Q (u-u_pre)
+            gamma_v=5.0,       # CLF velocidade
+            p_v=50000.0,        # peso slack CLF velocidade
+            p_slack=10.0, #50
             v_ref=v_ref,
             v_bounds=(0.0, 2.0),
             w_bounds=(-w_max, w_max),
@@ -517,6 +522,7 @@ def simulate():
 
         delta = rate_limit(delta_cmd, delta, du_max=delta_rate_max * dt)
         w_applied = (v_safe / L) * np.tan(delta)
+        u_pre = np.array([v_safe, w_applied])
 
         v_controller_hist.append(v_nom)
         v_qp_hist.append(v_safe)

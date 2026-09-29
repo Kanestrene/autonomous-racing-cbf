@@ -77,13 +77,64 @@ def _closest_point_on_segment(px, py, ax, ay, bx, by):
     qy = ay + t*aby
     return qx, qy, t
 
+def _closest_points_on_segments(px, py, A, B):
+    """
+    Versão vetorizada de _closest_point_on_segment para todos os segmentos AB.
+    Retorna (Q, d2): pontos mais próximos (N,2) e distâncias ao quadrado (N,).
+    """
+    abx = B[:, 0] - A[:, 0]
+    aby = B[:, 1] - A[:, 1]
+    apx = px - A[:, 0]
+    apy = py - A[:, 1]
+    denom = abx*abx + aby*aby
+    degenerate = denom < 1e-12
+    t = (apx*abx + apy*aby) / np.where(degenerate, 1.0, denom)
+    t = np.where(degenerate, 0.0, np.clip(t, 0.0, 1.0))
+    qx = A[:, 0] + t*abx
+    qy = A[:, 1] + t*aby
+    dx = px - qx
+    dy = py - qy
+    return np.stack([qx, qy], axis=1), dx*dx + dy*dy
+
+def _nearest_segments(px, py, A, B, max_segments, seg_hint=None, key=None, seg_window=100):
+    """
+    Escolhe os 'max_segments' segmentos AB mais próximos do ponto p.
+    Retorna (Q, d2) só dos segmentos escolhidos.
+
+    Se seg_hint (dict) for dado, procura só numa janela de +-seg_window segmentos
+    à volta do segmento mais próximo do passo anterior (seg_hint[key]) e atualiza-o.
+    Procura completa: na 1a chamada, ou se o mínimo cair no bordo da janela
+    (o robô saiu da janela -> re-ancorar).
+    """
+    n = len(A)
+    use_window = seg_hint is not None and key in seg_hint and 2*seg_window + 1 < n
+    if use_window:
+        idx = (seg_hint[key] + np.arange(-seg_window, seg_window + 1)) % n
+        Q, d2 = _closest_points_on_segments(px, py, A[idx], B[idx])
+        j = int(np.argmin(d2))
+        if j == 0 or j == len(idx) - 1:
+            use_window = False
+    if not use_window:
+        idx = None
+        Q, d2 = _closest_points_on_segments(px, py, A, B)
+        j = int(np.argmin(d2))
+
+    if seg_hint is not None:
+        seg_hint[key] = j if idx is None else int(idx[j])
+
+    m = min(max_segments, len(d2))
+    sel = np.argpartition(d2, m-1)[:m]
+    return Q[sel], d2[sel]
+
 def cbf_rows_for_barriers(x, y, th,
                             barrier_inner, barrier_outer,
                             ellipse_ab=(0.30, 0.20),
                             margin=0.05,
                             lookahead_l=0.35,
                             alpha=2.0,
-                            max_segments=40):
+                            max_segments=40,
+                            seg_hint=None,
+                            seg_window=100):
     """
     CBF para 2 barreiras (interna e externa), dadas como arrays Nx2 (fechados ou não).
     Retorna G, h para G u <= h, u=[v,w].
@@ -91,6 +142,8 @@ def cbf_rows_for_barriers(x, y, th,
     - Usa ponto lookahead p = [x + l cos(th), y + l sin(th)]
     - Para cada barreira, escolhe os 'max_segments' segmentos mais próximos e
         cria uma restrição por segmento escolhido.
+    - seg_hint (dict, opcional): procura só numa janela de +-seg_window segmentos
+        à volta do mais próximo do passo anterior (ver _nearest_segments).
     """
 
     a, b = ellipse_ab
@@ -103,7 +156,7 @@ def cbf_rows_for_barriers(x, y, th,
     # raio efetivo do robô na direção "p -> barreira" (aprox pelo vetor p-q)
     # (vamos calcular por restrição)
 
-    def add_constraints_from_poly(poly):
+    def add_constraints_from_poly(poly, key):
         G_list = []
         h_list = []
 
@@ -120,24 +173,11 @@ def cbf_rows_for_barriers(x, y, th,
         A = poly2[:-1]
         B = poly2[1:]
 
-        # calcula distância do ponto lookahead a cada segmento (para selecionar poucos)
-        d2 = np.empty(len(A), dtype=float)
-        q_cache = np.empty((len(A), 2), dtype=float)
+        # segmentos mais próximos do ponto lookahead
+        q_sel, _ = _nearest_segments(px, py, A, B, max_segments,
+                                     seg_hint=seg_hint, key=key, seg_window=seg_window)
 
-        for i, ((ax, ay), (bx, by)) in enumerate(zip(A, B)):
-            qx, qy, _ = _closest_point_on_segment(px, py, ax, ay, bx, by)
-            q_cache[i, 0] = qx
-            q_cache[i, 1] = qy
-            dx = px - qx
-            dy = py - qy
-            d2[i] = dx*dx + dy*dy
-
-        # escolhe segmentos mais próximos
-        m = min(max_segments, len(A))
-        idxs = np.argpartition(d2, m-1)[:m]
-
-        for i in idxs:
-            qx, qy = q_cache[i, 0], q_cache[i, 1]
+        for qx, qy in q_sel:
             dx = px - qx
             dy = py - qy
             dist = np.hypot(dx, dy)
@@ -168,8 +208,8 @@ def cbf_rows_for_barriers(x, y, th,
 
     G_list_all, h_list_all = [], []
 
-    for poly in (barrier_inner, barrier_outer):
-        Gi, hi = add_constraints_from_poly(poly)
+    for key, poly in enumerate((barrier_inner, barrier_outer)):
+        Gi, hi = add_constraints_from_poly(poly, key)
         G_list_all.extend(Gi)
         h_list_all.extend(hi)
 

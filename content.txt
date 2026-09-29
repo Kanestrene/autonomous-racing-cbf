@@ -1,37 +1,37 @@
 env\Scripts\activate 
 
-Pack1 --> Controlo com Pure Pursuit, variáveis de controlo v e w
+Pack1 --> Pure Pursuit control, control variables v and w
 
-Pack1.1 --> Controlo com Pure Pursuit, variáveis de controlo v e w com iHOCBF
+Pack1.1 --> Pure Pursuit control, control variables v and w with iHOCBF
 
-Pack2 --> Controlo com Lyapunov, variáveis de controlo v e w
+Pack2 --> Lyapunov control, control variables v and w
 
-Pack3 --> Controlo com Pure Pursuit, variáveis de controlo a e alfa
+Pack3 --> Pure Pursuit control, control variables a and alpha
 
-Pack4 --> Controlo com Lyapunov, variáveis de controlo a e alfa
+Pack4 --> Lyapunov control, control variables a and alpha
 
-Real1 --> Controlo com PP u=(v,w) 
+Real1 --> PP control u=(v,w)
 
-Real1.1 --> Cópia do Real1 com iHOCBF 
+Real1.1 --> Copy of Real1 with iHOCBF
 
-Real1.2 --> Cópia do Real1 com obstaculos em elipse
+Real1.2 --> Copy of Real1 with ellipse-shaped obstacles
 
-Real2 --> Controlo com CLF u=(v,w) 
+Real2 --> CLF control u=(v,w)
 
-Real3 --> Controlo com CLF U=(a,alpha)
+Real3 --> CLF control u=(a,alpha)
 
-Pack5 --> Treino de aprendeizagem com conjunto de parametros definidos
+Pack5 --> Learning training with a defined set of parameters
 
-Pack6 --> Treino de aprendizagem com conjunto de parametros continuos com SVM e FGO
+Pack6 --> Learning training with a continuous set of parameters using SVM and FGO
 
-Pack7 --> Treino de aprendizagem com p e q (Função custo D com score)
+Pack7 --> Learning training with p and q (cost function D with score)
 
-Pack8 --> Treino de aprendizagem com p e q (Função custo D min de b)
+Pack8 --> Learning training with p and q (cost function D, min of b)
 
-Real4 --> Controlo com CLF u=(v,w) (igual o Real2 mas a tentar emitar a pista das simulações)
+Real4 --> CLF control u=(v,w) (same as Real2 but trying to emulate the simulation track)
 
-Real5 --> Copia Real4 com obstaculos da simulação
+Real5 --> Copy of Real4 with the simulation obstacles
 
-Real6 --> Copia Real1 com obstaculos da simulação
+Real6 --> Copy of Real1 with the simulation obstacles
 
 App --> c-controll.base44.app
