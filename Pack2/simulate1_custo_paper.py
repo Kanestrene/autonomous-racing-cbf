@@ -15,6 +15,8 @@ from controller import (
 )
 
 
+OUT_DIR = Path(__file__).resolve().parent / "figuras" / "simulate1_custo_paper"
+
 WAYPOINTS = [
     (3.0, 3.0),
     (2.6, 3.5),
@@ -80,7 +82,8 @@ WAYPOINTS = [
 
 def save_track_only():
     script_dir = Path(__file__).resolve().parent
-    pdf_path = script_dir / "pista.pdf"
+    pdf_path = OUT_DIR / "pista.pdf"
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     waypoints = [
         (3.0, 3.0),
@@ -198,15 +201,16 @@ def save_track_only():
     return pdf_path
 
 
-def simulate():
+def simulate(animate=True):
     script_dir = Path(__file__).resolve().parent
-    pdf_path = script_dir / "simulate1_custo_paper_volta_completa.pdf"
-    linear_speed_pdf_path = script_dir / "simulate1_custo_paper_velocidade_linear.pdf"
-    angular_speed_pdf_path = script_dir / "simulate1_custo_paper_velocidade_angular.pdf"
-    delta_pdf_path = script_dir / "simulate1_custo_paper_delta.pdf"
-    cpu_pdf_path = script_dir / "simulate1_custo_paper_tempo_cpu.pdf"
-    qp_pdf_path = script_dir / "simulate1_custo_paper_tempo_qp.pdf"
-    lat_pdf_path = script_dir / "simulate1_custo_paper_erro_lateral.pdf"
+    pdf_path = OUT_DIR / "simulate1_custo_paper_volta_completa.pdf"
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    linear_speed_pdf_path = OUT_DIR / "simulate1_custo_paper_velocidade_linear.pdf"
+    angular_speed_pdf_path = OUT_DIR / "simulate1_custo_paper_velocidade_angular.pdf"
+    delta_pdf_path = OUT_DIR / "simulate1_custo_paper_delta.pdf"
+    cpu_pdf_path = OUT_DIR / "simulate1_custo_paper_tempo_cpu.pdf"
+    qp_pdf_path = OUT_DIR / "simulate1_custo_paper_tempo_qp.pdf"
+    lat_pdf_path = OUT_DIR / "simulate1_custo_paper_erro_lateral.pdf"
 
     waypoints = WAYPOINTS
 
@@ -269,16 +273,16 @@ def simulate():
     prev_near_idx = None
     stop_requested = False
 
-    plt.ion()
-    fig, ax = plt.subplots(figsize=(9, 5))
-    fig.patch.set_facecolor("white")
-
     def on_key_press(event):
         nonlocal stop_requested
         if event.key in ("enter", "return"):
             stop_requested = True
 
-    fig.canvas.mpl_connect("key_press_event", on_key_press)
+    if animate:
+        plt.ion()
+        fig, ax = plt.subplots(figsize=(9, 5))
+        fig.patch.set_facecolor("white")
+        fig.canvas.mpl_connect("key_press_event", on_key_press)
 
     delta = 0.0
 
@@ -405,29 +409,43 @@ def simulate():
         fig_delta.tight_layout()
         fig_delta.savefig(delta_pdf_path, format="pdf", bbox_inches="tight")
 
+        box_kw = dict(
+            widths=0.5, showmeans=False, showfliers=False, patch_artist=True,
+            boxprops=dict(facecolor="lightsteelblue", edgecolor="C0", linewidth=1.5),
+            whiskerprops=dict(color="C0", linewidth=1.5),
+            capprops=dict(color="C0", linewidth=1.5),
+            medianprops=dict(color="C0", linewidth=line_width),
+        )
+
         fig_cpu, ax_cpu = plt.subplots()
-        ax_cpu.plot(t, step_ms, label="Total time", linewidth=line_width)
-        ax_cpu.axhline(step_ms.mean(), linestyle="--", color="C1",
-                       label=f"Mean = {step_ms.mean():.2f} ms")
+        bp_cpu = ax_cpu.boxplot(step_ms, **box_kw)
+        ax_cpu.set_xticks([1])
+        ax_cpu.set_xticklabels(["Total time"])
         ax_cpu.set_title("Total time per step", fontsize=title_fontsize)
-        ax_cpu.set_xlabel("Time [s]", fontsize=label_fontsize)
         ax_cpu.set_ylabel("Time [ms]", fontsize=label_fontsize)
         ax_cpu.grid(False)
         ax_cpu.tick_params(axis="both", labelsize=tick_fontsize)
-        ax_cpu.legend(fontsize=legend_fontsize)
+        ax_cpu.legend(
+            [bp_cpu["medians"][0]],
+            [f"Median = {np.median(step_ms):.2f} ms"],
+            fontsize=legend_fontsize,
+        )
         fig_cpu.tight_layout()
         fig_cpu.savefig(cpu_pdf_path, format="pdf", bbox_inches="tight")
 
         fig_qp, ax_qp = plt.subplots()
-        ax_qp.plot(t, qp_ms, label="solve_qp", linewidth=line_width)
-        ax_qp.axhline(qp_ms.mean(), linestyle="--", color="C1",
-                      label=f"Mean = {qp_ms.mean():.3f} ms")
+        bp_qp = ax_qp.boxplot(qp_ms, **box_kw)
+        ax_qp.set_xticks([1])
+        ax_qp.set_xticklabels(["solve_qp"])
         ax_qp.set_title("QP solve time per step", fontsize=title_fontsize)
-        ax_qp.set_xlabel("Time [s]", fontsize=label_fontsize)
         ax_qp.set_ylabel("QP time [ms]", fontsize=label_fontsize)
         ax_qp.grid(False)
         ax_qp.tick_params(axis="both", labelsize=tick_fontsize)
-        ax_qp.legend(fontsize=legend_fontsize)
+        ax_qp.legend(
+            [bp_qp["medians"][0]],
+            [f"Median = {np.median(qp_ms):.3f} ms"],
+            fontsize=legend_fontsize,
+        )
         fig_qp.tight_layout()
         fig_qp.savefig(qp_pdf_path, format="pdf", bbox_inches="tight")
 
@@ -451,6 +469,28 @@ def simulate():
             f"{cpu_pdf_path}, {qp_pdf_path} e {lat_pdf_path}"
         )
         plt.show()
+
+    def collect_results():
+        return {
+            "hx": np.array(hx),
+            "hy": np.array(hy),
+            "v_nom": np.array(v_controller_hist),
+            "v_qp": np.array(v_qp_hist),
+            "w_nom": np.array(omega_controller_hist),
+            "w_qp": np.array(omega_qp_hist),
+            "delta_nom": np.array(delta_controller_hist),
+            "delta_qp": np.array(delta_qp_hist),
+            "step_ms": np.array(step_time_hist) * 1e3,
+            "qp_ms": np.array(qp_time_hist) * 1e3,
+            "lat": np.array(lat_err_hist),
+            "dt": dt,
+            "lap_completed": lap_progress_idx >= (n_path - 1),
+            "px": px,
+            "py": py,
+            "obstacles": obstacles,
+            "inner_bar": inner_bar,
+            "outer_bar": outer_bar,
+        }
 
     for k in range(steps):
         Ld = L0 + kv * abs(v)
@@ -541,7 +581,7 @@ def simulate():
 
         lap_completed = lap_progress_idx >= (n_path - 1)
 
-        if k % 5 == 0 or lap_completed:
+        if animate and (k % 5 == 0 or lap_completed):
             draw_frame(Ld, v_safe, w_applied, cte)
 
         if stop_requested:
@@ -551,21 +591,24 @@ def simulate():
             plt.ioff()
             plt.close(fig)
             show_velocity_plots()
-            return pdf_path
+            return collect_results()
 
         if lap_completed:
-            draw_frame(Ld, v_safe, w_applied, cte, show_labels=False)
-            fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
-            print(f"Volta completa. Figura guardada em: {pdf_path}")
-            plt.ioff()
-            plt.close(fig)
-            show_velocity_plots()
-            return pdf_path
+            if animate:
+                draw_frame(Ld, v_safe, w_applied, cte, show_labels=False)
+                fig.savefig(pdf_path, format="pdf", bbox_inches="tight")
+                print(f"Volta completa. Figura guardada em: {pdf_path}")
+                plt.ioff()
+                plt.close(fig)
+                show_velocity_plots()
+            return collect_results()
 
-    plt.ioff()
-    plt.close(fig)
     print("A simulacao terminou por tempo maximo sem completar uma volta.")
-    show_velocity_plots()
+    if animate:
+        plt.ioff()
+        plt.close(fig)
+        show_velocity_plots()
+    return collect_results()
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ from controller import wrap_to_pi, build_spline_path
 from simulate1 import WAYPOINTS
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+OUT_DIR = SCRIPT_DIR / "figuras" / "compare"
 
 DT = 0.02
 T_MAX = 50.0
@@ -244,6 +245,7 @@ def summarize(method, logs, sc):
 
 
 def plot_results(sc, logs, times):
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     labels = list(logs.keys())
 
     fig, ax = plt.subplots(figsize=(8, 7))
@@ -259,7 +261,7 @@ def plot_results(sc, logs, times):
     ax.set_ylabel("y [m]")
     ax.legend()
     fig.tight_layout()
-    fig.savefig(SCRIPT_DIR / "compare_trajetorias.pdf", bbox_inches="tight")
+    fig.savefig(OUT_DIR / "compare_trajetorias.pdf", bbox_inches="tight")
 
     fig, ax = plt.subplots()
     for m in labels:
@@ -268,7 +270,7 @@ def plot_results(sc, logs, times):
     ax.set_ylabel("CTE [m]")
     ax.legend()
     fig.tight_layout()
-    fig.savefig(SCRIPT_DIR / "compare_cte.pdf", bbox_inches="tight")
+    fig.savefig(OUT_DIR / "compare_cte.pdf", bbox_inches="tight")
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 4))
     ax1.boxplot([times[m][0] for m in labels], tick_labels=labels, showfliers=False)
@@ -277,7 +279,7 @@ def plot_results(sc, logs, times):
     ax2.boxplot([times[m][1] for m in labels], tick_labels=labels, showfliers=False)
     ax2.set_title("Só solve_qp")
     fig.tight_layout()
-    fig.savefig(SCRIPT_DIR / "compare_tempo_cpu.pdf", bbox_inches="tight")
+    fig.savefig(OUT_DIR / "compare_tempo_cpu.pdf", bbox_inches="tight")
 
     fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
     for m in labels:
@@ -288,7 +290,7 @@ def plot_results(sc, logs, times):
     ax2.set_xlabel("Tempo [s]")
     ax1.legend()
     fig.tight_layout()
-    fig.savefig(SCRIPT_DIR / "compare_velocidades.pdf", bbox_inches="tight")
+    fig.savefig(OUT_DIR / "compare_velocidades.pdf", bbox_inches="tight")
 
 
 def main():
@@ -317,13 +319,14 @@ def main():
         vals = [f"{r[key]:.4f}" if isinstance(r[key], float) else str(r[key]) for r in rows]
         print(f"{key:22s} " + "  ".join(f"{v:>12s}" for v in vals))
 
-    with open(SCRIPT_DIR / "compare_results.csv", "w", newline="") as f:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(OUT_DIR / "compare_results.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
 
     plot_results(sc, first_logs, times)
-    print(f"\nResultados em {SCRIPT_DIR / 'compare_results.csv'} e compare_*.pdf")
+    print(f"\nResultados em {OUT_DIR / 'compare_results.csv'} e compare_*.pdf")
     if not args.no_show:
         plt.show()
 

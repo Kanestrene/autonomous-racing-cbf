@@ -15,15 +15,19 @@ from controller import (
 from simulate1 import WAYPOINTS
 
 
+OUT_DIR = Path(__file__).resolve().parent / "figuras" / "simulate_paper"
+
+
 def simulate():
     script_dir = Path(__file__).resolve().parent
-    pdf_path = script_dir / "simulate_paper_volta_completa.pdf"
-    linear_speed_pdf_path = script_dir / "simulate_paper_velocidade_linear.pdf"
-    angular_speed_pdf_path = script_dir / "simulate_paper_velocidade_angular.pdf"
-    delta_pdf_path = script_dir / "simulate_paper_delta.pdf"
-    cpu_pdf_path = script_dir / "simulate_paper_tempo_cpu.pdf"
-    qp_pdf_path = script_dir / "simulate_paper_tempo_qp.pdf"
-    lat_pdf_path = script_dir / "simulate_paper_erro_lateral.pdf"
+    pdf_path = OUT_DIR / "simulate_paper_volta_completa.pdf"
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    linear_speed_pdf_path = OUT_DIR / "simulate_paper_velocidade_linear.pdf"
+    angular_speed_pdf_path = OUT_DIR / "simulate_paper_velocidade_angular.pdf"
+    delta_pdf_path = OUT_DIR / "simulate_paper_delta.pdf"
+    cpu_pdf_path = OUT_DIR / "simulate_paper_tempo_cpu.pdf"
+    qp_pdf_path = OUT_DIR / "simulate_paper_tempo_qp.pdf"
+    lat_pdf_path = OUT_DIR / "simulate_paper_erro_lateral.pdf"
 
     waypoints = WAYPOINTS
 

@@ -208,7 +208,16 @@ def cbf_rows_for_barriers(x, y, th,
 
     G_list_all, h_list_all = [], []
 
-    for key, poly in enumerate((barrier_inner, barrier_outer)):
+    # cada barreira pode ser um array Nx2 ou uma lista de arrays Nx2
+    # (ex.: pista em 8 -> contorno exterior + 2 ilhas interiores)
+    def as_poly_list(b):
+        if isinstance(b, (list, tuple)) and len(b) > 0 and np.asarray(b[0]).ndim == 2:
+            return list(b)
+        return [b]
+
+    polys = as_poly_list(barrier_inner) + as_poly_list(barrier_outer)
+
+    for key, poly in enumerate(polys):
         Gi, hi = add_constraints_from_poly(poly, key)
         G_list_all.extend(Gi)
         h_list_all.extend(hi)
