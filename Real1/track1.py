@@ -30,6 +30,7 @@ from shared_config import (
     OBSTACLES_M,
     ROBOT_ELLIPSE_A_M,
     ROBOT_ELLIPSE_B_M,
+    TRACK_NAME,
     TRACK_POINTS_M,
 )
 
@@ -530,6 +531,13 @@ def _replace_obstacles_block(text, name, obstacles):
 
 def save_control_points_to_shared_config():
     global edited_points_dirty
+
+    if TRACK_NAME != "real":
+        print(
+            f"Pista '{TRACK_NAME}' vem do Pack2 (sim_tracks.py): nao guardo em "
+            f"{SHARED_CONFIG_PATH.name} para nao substituir a pista real."
+        )
+        return
 
     text = SHARED_CONFIG_PATH.read_text(encoding="utf-8")
     text = _replace_points_block_before_marker(

@@ -166,3 +166,22 @@ OBSTACLES_M = [
     {"x": 0.94, "y": 0.80, "r": 0.05},
     {"x": -0.12, "y": 1.01, "r": 0.05},
 ]
+
+
+# ============================================================
+# Pista ativa
+#   "real"                 -> pontos/barreiras/obstaculos acima
+#   "sim4" / "sim5" / "sim6" -> pistas do Pack2/simulateN.py escaladas (ver sim_tracks.py)
+# A visao (track1.py / cam.py) e o controlo (run_real*.py) leem daqui, por isso usam
+# sempre a mesma pista.
+# ============================================================
+TRACK_NAME = "sim6"
+
+if TRACK_NAME != "real":
+    from sim_tracks import load_sim_track
+
+    _sim_track = load_sim_track(TRACK_NAME)
+    TRACK_POINTS_M = _sim_track["track"]
+    BARRIER_INNER_M = _sim_track["inner"]
+    BARRIER_OUTER_M = _sim_track["outer"]
+    OBSTACLES_M = _sim_track["obstacles"]
