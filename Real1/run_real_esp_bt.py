@@ -30,7 +30,7 @@ VISION_TRACK_ID = 2
 ROUND_CORNER_RADIUS_M = 0.2
 ROUND_CORNER_SAMPLES = 24
 PRINT_TIMING = True
-TIMING_PRINT_EVERY = 0  # 1 = print every control loop
+TIMING_PRINT_EVERY = 0  # 1 = print every control loop, 0 = so a media no fim
 
 
 # ============================================================
@@ -507,9 +507,9 @@ async def run_real():
             v_safe = v_safe - (delta**2)
             t_steering = time.perf_counter()
 
-            esp32_msg = await esp32.send_cmd(v=v_safe, delta= delta)
+            esp32_msg = await esp32.send_cmd(v=v_safe, delta= -delta)
             t_ble = time.perf_counter()
-            #esp32_msg = await esp32.send_cmd(v=0.2, delta=3.0)
+            #esp32_msg = await esp32.send_cmd(v=0.0, delta=3.0)
 
             print(
                 f"estado: x={x:.3f} m, y={y:.3f} m, yaw={yaw:.3f} rad, "
@@ -538,7 +538,7 @@ async def run_real():
             }
             timing_stats.add_many(timing_sample)
 
-            if PRINT_TIMING and loop_counter % TIMING_PRINT_EVERY == 0:
+            if PRINT_TIMING and TIMING_PRINT_EVERY > 0 and loop_counter % TIMING_PRINT_EVERY == 0:
                 print(
                     "Timing | "
                     f"frame={vision_timing.get('frame')} | "

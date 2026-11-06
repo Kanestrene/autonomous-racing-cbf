@@ -2,6 +2,7 @@ import numpy as np
 from qpsolvers import solve_qp
 import cbf 
 from shared_config import (
+    BARRIER_INNER_EXTRA_M,
     BARRIER_INNER_M,
     BARRIER_OUTER_M,
     BARRIER_ROUND_CORNER_RADIUS_M,
@@ -76,12 +77,16 @@ def get_dense_barriers():
     global _BARRIER_CACHE
 
     if _BARRIER_CACHE is None:
-        inner = build_rounded_polyline(
-            BARRIER_INNER_M,
-            corner_radius=BARRIER_ROUND_CORNER_RADIUS_M,
-            corner_samples=BARRIER_ROUND_CORNER_SAMPLES,
-            closed=True,
-        )
+        # lista de ilhas interiores (1 na pista real, 2 na pista em 8)
+        inner = [
+            np.asarray(build_rounded_polyline(
+                island,
+                corner_radius=BARRIER_ROUND_CORNER_RADIUS_M,
+                corner_samples=BARRIER_ROUND_CORNER_SAMPLES,
+                closed=True,
+            ), dtype=float)
+            for island in [BARRIER_INNER_M, *BARRIER_INNER_EXTRA_M]
+        ]
         outer = build_rounded_polyline(
             BARRIER_OUTER_M,
             corner_radius=BARRIER_ROUND_CORNER_RADIUS_M,
@@ -89,7 +94,7 @@ def get_dense_barriers():
             closed=True,
         )
         _BARRIER_CACHE = (
-            np.asarray(inner, dtype=float),
+            inner,
             np.asarray(outer, dtype=float),
         )
 

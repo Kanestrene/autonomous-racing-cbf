@@ -21,6 +21,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from shared_config import (
+    BARRIER_INNER_EXTRA_M,
     BARRIER_INNER_M,
     BARRIER_OUTER_M,
     BARRIER_ROUND_CORNER_RADIUS_M,
@@ -33,6 +34,7 @@ from shared_config import (
     TRACK_NAME,
     TRACK_POINTS_M,
 )
+from undistort import undistort_frame
 
 #Global Variables
 kernel = np.ones((3,3),np.uint8)
@@ -61,6 +63,11 @@ raw_frame_width = 0
 CROP_HEIGHT_FACTOR = 8
 CROP_WIDTH_START = None
 CROP_WIDTH_END = None
+CROP_HEIGHT_START = None
+CROP_HEIGHT_END = None
+SELECT_CROP_AT_START = True  # escolher o corte com o rato ao arrancar
+CAMERA_INDEX = 0  # webcam USB (iCatch V37); a do PC e o 1. A ordem pode mudar!
+CAMERA_WIDTH, CAMERA_HEIGHT = 1280, 720  # igual ao cam.py e ao calibrate_camera.py
 RESIZE_FACTOR = 0.9
 INVERT_IMAGE = True
 INVERT_FLIP_CODE = -1  # 1=horizontal, 0=vertical, -1=ambas
@@ -95,6 +102,7 @@ FINISHING_LINE_MAX_X = None
 FINISHING_LINE_MIN_Y = None
 FINISHING_LINE_MAX_Y = None
 border_height = 40
+SHOW_LAP_INFO = False  # barra LAP/TIME/BEST por baixo da janela Tracking
 rectangle_width = 0
 
 # Color range 
@@ -139,7 +147,7 @@ def overlay(frame_shape):
 
 def transform_raw_point_to_processed(x_raw, y_raw):
     x_proc = float(x_raw) - float(CROP_WIDTH_START)
-    y_proc = float(y_raw)
+    y_proc = float(y_raw) - float(CROP_HEIGHT_START)
 
     x_proc *= RESIZE_FACTOR
     y_proc *= RESIZE_FACTOR
@@ -370,14 +378,19 @@ def draw_reference_path(img):
             )
 
 
+def _editable_point_sets():
+    sets = [
+        ("track", TRACK_POINTS_M),
+        ("inner", BARRIER_INNER_M),
+        ("outer", BARRIER_OUTER_M),
+    ]
+    for k, island in enumerate(BARRIER_INNER_EXTRA_M):
+        sets.append((f"inner_extra{k}", island))
+    return sets
+
+
 def _points_by_name(points_name):
-    if points_name == "track":
-        return TRACK_POINTS_M
-    if points_name == "inner":
-        return BARRIER_INNER_M
-    if points_name == "outer":
-        return BARRIER_OUTER_M
-    return None
+    return dict(_editable_point_sets()).get(points_name)
 
 
 def _round_edit_coord(value):
@@ -395,11 +408,7 @@ def _find_nearest_control_point(x_px, y_px):
     best_dist = float("inf")
     px_per_meter = abs(1.0 / PIXEL_TO_METER)
 
-    for points_name, points in (
-        ("track", TRACK_POINTS_M),
-        ("inner", BARRIER_INNER_M),
-        ("outer", BARRIER_OUTER_M),
-    ):
+    for points_name, points in _editable_point_sets():
         for idx, (x_m, y_m) in enumerate(points):
             px, py = m_to_px(x_m, y_m)
             if not (np.isfinite(px) and np.isfinite(py)):
@@ -613,6 +622,8 @@ def draw_barrier(img, barrier_points_m, color):
 
 def draw_barriers(img):
     draw_barrier(img, BARRIER_INNER_M, (0, 0, 255))
+    for island in BARRIER_INNER_EXTRA_M:
+        draw_barrier(img, island, (0, 0, 255))
     draw_barrier(img, BARRIER_OUTER_M, (0, 0, 255))
 
 
@@ -746,23 +757,64 @@ class WindowRecorder:
             print(f"Gravacao {self.window_name} guardada em {self.path}")
 
 
+def default_crop(raw_width, raw_height):
+    """Corte por defeito (x0, x1, y0, y1) em pixeis do frame original."""
+    return (
+        raw_width//3 - 160,
+        raw_width//3*2 + 150,
+        0,
+        raw_height//10*CROP_HEIGHT_FACTOR + 75,
+    )
+
+
+#Let the user draw the crop rectangle on the raw camera frame
+#Parameters: video capture
+def select_crop(cap):
+
+    global CROP_WIDTH_START, CROP_WIDTH_END, CROP_HEIGHT_START, CROP_HEIGHT_END
+
+    ret, frame = cap.read()
+    if not ret:
+        check(cap)
+    frame = undistort_frame(frame)
+
+    raw_height, raw_width = frame.shape[:2]
+    x0, x1, y0, y1 = default_crop(raw_width, raw_height)
+
+    preview = frame.copy()
+    cv2.rectangle(preview, (x0, y0), (x1 - 1, y1 - 1), (0, 255, 255), 2)
+    cv2.putText(preview, "Desenha o corte e carrega Enter (C = manter o amarelo)",
+                (10, 25), font, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+
+    print(f"Frame da camera: {raw_width}x{raw_height}. Desenha o corte e carrega Enter/Espaco; C mantem o corte por defeito.")
+    x, y, w, h = cv2.selectROI("Crop", preview, showCrosshair=False)
+    cv2.destroyWindow("Crop")
+
+    if w > 0 and h > 0:
+        x0, x1, y0, y1 = int(x), int(x + w), int(y), int(y + h)
+
+    CROP_WIDTH_START, CROP_WIDTH_END = x0, x1
+    CROP_HEIGHT_START, CROP_HEIGHT_END = y0, y1
+    print(f"Corte: x=[{x0}, {x1}] y=[{y0}, {y1}]")
+
+
 #Process the frame
 #Parameters: Frame to process
 #Returns: The frame cropped and rotated
 def process_frame(frame):
 
-    global CROP_WIDTH_START, CROP_WIDTH_END, frame_width, frame_height, rectangle_width, raw_frame_width, raw_frame_height
+    global CROP_WIDTH_START, CROP_WIDTH_END, CROP_HEIGHT_START, CROP_HEIGHT_END, frame_width, frame_height, rectangle_width, raw_frame_width, raw_frame_height
     
+    frame = undistort_frame(frame)
     raw_frame_height, raw_frame_width = frame.shape[:2]
     frame_height, frame_width = frame.shape[:2]
 
     #Get crop dimensions
     if CROP_WIDTH_START is None:
-        CROP_WIDTH_START = frame_width//3 - 160
-        CROP_WIDTH_END = frame_width//3*2 + 150
+        CROP_WIDTH_START, CROP_WIDTH_END, CROP_HEIGHT_START, CROP_HEIGHT_END = default_crop(frame_width, frame_height)
     
     #Crop and rotate the frame
-    frame = frame[:frame_height//10*8 + 75, CROP_WIDTH_START:CROP_WIDTH_END]
+    frame = frame[CROP_HEIGHT_START:CROP_HEIGHT_END, CROP_WIDTH_START:CROP_WIDTH_END]
     
     #Resize and rotate
     frame = cv2.resize(frame, None, fx=RESIZE_FACTOR, fy=RESIZE_FACTOR)
@@ -1193,7 +1245,9 @@ def main():
     global click_count, FINISHING_LINE_MIN_X, FINISHING_LINE_MAX_X, FINISHING_LINE_MIN_Y, FINISHING_LINE_MAX_Y, contour, lap_number, lap_time, best_lap_time
 
     #Open the camera
-    cap = cv2.VideoCapture(0, cv2.CAP_MSMF)
+    cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_MSMF)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     live_recorder = None
     tracking_recorder = None
@@ -1201,6 +1255,9 @@ def main():
     ret, frame = cap.read()
     if not ret:
         check(cap)    
+
+    if SELECT_CROP_AT_START:
+        select_crop(cap)
 
     calibrate_blue_color(cap)
 
@@ -1342,7 +1399,8 @@ def main():
             last_tracking_frame = img.copy()
 
             #Display border and lap info
-            img = apply_border(img, phrases)
+            if SHOW_LAP_INFO:
+                img = apply_border(img, phrases)
             key = show("Tracking", img, tracking_recorder)
             if handle_tracking_key(key, last_tracking_frame):
                 break

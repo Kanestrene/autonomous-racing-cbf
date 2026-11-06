@@ -7,6 +7,7 @@ from pupil_apriltags import Detector
 from ultralytics import YOLO
 import time
 from shared_config import OBSTACLES_M, TRACK_POINTS_M
+from undistort import undistort_frame
 
 # =========================
 # CONFIG
@@ -23,7 +24,7 @@ WIDTH, HEIGHT = 1280, 720
 TARGET_FPS = 30
 # Preferir a camara traseira por omissao.
 # Se for preciso trocar, basta mudar este indice.
-OPENCV_CAMERA_INDEX = 0
+OPENCV_CAMERA_INDEX = 1
 CAMERA_INDEX_CANDIDATES = [OPENCV_CAMERA_INDEX, 1, 2, 3]
 
 # Referencial em metros (definido pelo utilizador)
@@ -181,7 +182,7 @@ class Camera:
         ret, frame = self._cam.read()
         if not ret or frame is None or not _is_valid_frame(frame):
             raise RuntimeError("Erro ao capturar frame válido")
-        return frame
+        return undistort_frame(frame)
 
     def stop(self):
         self._cam.release()

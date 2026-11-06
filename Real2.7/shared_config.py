@@ -1,0 +1,196 @@
+'''
+TRACK_POINTS_M = [
+    (0.7, 0.1),
+    (-0.7, 0.1),
+    (-0.98, 0.4),
+    (-0.92, 1.35),
+    (-0.65, 1.5),
+    (-0.4, 1.35),
+    (-0.35, 1.0),
+    (-0.0, 0.87),
+    (0.25, 1.02),
+    (0.3, 1.45),
+    (0.6, 1.6),
+    (0.95, 1.45),
+    (1.0, 0.4),
+]
+'''
+'''
+TRACK_POINTS_M = [
+    (0.7, 0.1),
+    (-0.7, 0.1),
+    (-0.98, 0.4),
+    (-0.98, 1.35),
+    (-0.65, 1.5),
+    (-0.4, 1.3),
+    (-0.3, 1.0),
+    (-0.1, 0.95),
+    (0.0, 1.02),
+    (0.2, 1.4),
+    (0.5, 1.55),
+    (0.95, 1.4),
+    (1.0, 0.4),
+]
+'''
+
+TRACK_POINTS_M = [
+    (0.73, -0.01),
+    (-0.65, 0.05),
+    (-0.96, 0.30),
+    (-0.93, 1.10),
+    (-0.66, 1.23),
+    (-0.41, 1.20),
+    (-0.30, 1.09),
+    (-0.14, 0.99),
+    (-0.01, 1.00),
+    (0.23, 1.10),
+    (0.49, 1.27),
+    (0.74, 1.25),
+    (0.89, 1.18),
+    (0.95, 1.06),
+    (0.96, 0.44),
+]
+
+
+BARRIER_ROUND_CORNER_RADIUS_M = 0.20
+BARRIER_ROUND_CORNER_SAMPLES = 24
+
+
+BARRIER_INNER_M = [
+    (0.52, 0.26),
+    (-0.63, 0.30),
+    (-0.68, 0.45),
+    (-0.66, 1.00),
+    (-0.58, 1.07),
+    (-0.51, 1.04),
+    (-0.46, 1.00),
+    (-0.38, 0.76),
+    (-0.08, 0.60),
+    (0.28, 0.68),
+    (0.44, 0.99),
+    (0.54, 1.02),
+    (0.61, 0.97),
+    (0.65, 0.89),
+    (0.60, 0.35),
+]
+
+BARRIER_OUTER_M = [
+    (0.86, -0.23),
+    (-0.95, -0.20),
+    (-1.13, -0.11),
+    (-1.22, 0.14),
+    (-1.23, 1.55),
+    (-1.14, 1.69),
+    (-1.02, 1.76),
+    (-0.63, 1.78),
+    (-0.43, 1.71),
+    (-0.22, 1.41),
+    (-0.12, 1.29),
+    (0.10, 1.27),
+    (0.43, 1.65),
+    (0.52, 1.73),
+    (0.67, 1.77),
+    (1.02, 1.76),
+    (1.22, 1.58),
+    (1.15, 0.01),
+    (1.07, -0.17),
+]
+
+ROBOT_ELLIPSE_A_M = 0.05
+ROBOT_ELLIPSE_B_M = 0.02
+# Marcadores do carro: bolinha verde no centro (posicao) e azul na frente (angulo)
+GREEN_HSV_LOWER = (41, 44, 89)
+GREEN_HSV_UPPER = (74, 255, 255)
+BLUE_HSV_LOWER = (95, 80, 60)
+BLUE_HSV_UPPER = (130, 255, 255)
+# Desvio do angulo das bolinhas (theta = theta_bolinhas + desvio); valor inicial do
+# filtro do track1.py, que o estima em andamento. Tecla O na janela Tracking guarda-o aqui.
+MARKER_THETA_OFFSET_DEG = 0.0
+
+'''
+TRACK_POINTS_M = [
+    (0.7, 0.1),
+
+    (0.3, 0.1),
+    (-0.2, 0.1),
+    (-0.7, 0.1),
+
+    (-0.82, 0.18),
+    (-0.92, 0.28),
+    (-0.98, 0.4),
+
+    (-0.98, 0.7),
+    (-0.98, 1.0),
+    (-0.98, 1.35),
+
+    (-0.9, 1.42),
+    (-0.78, 1.48),
+    (-0.65, 1.5),
+
+    (-0.52, 1.46),
+    (-0.44, 1.38),
+    (-0.4, 1.3),
+
+    (-0.37, 1.15),
+    (-0.35, 1.0),
+    (-0.35, 0.9),
+
+    (-0.25, 0.84),
+    (-0.12, 0.81),
+    (0.0, 0.8),
+
+    (0.12, 0.82),
+    (0.18, 0.86),
+    (0.2, 0.9),
+
+    (0.2, 1.05),
+    (0.2, 1.2),
+    (0.2, 1.3),
+
+    (0.22, 1.4),
+    (0.25, 1.5),
+
+    (0.35, 1.58),
+    (0.42, 1.62),
+    (0.5, 1.65),
+
+    (0.65, 1.62),
+    (0.78, 1.56),
+    (0.85, 1.5),
+
+    (0.9, 1.42),
+    (0.93, 1.36),
+    (0.95, 1.3),
+
+    (0.97, 1.0),
+    (0.99, 0.7),
+    (1.0, 0.4),
+]
+'''
+OBSTACLES_M = [
+    {"x": -0.34, "y": 0.04, "r": 0.05},
+    {"x": 0.95, "y": 0.70, "r": 0.05},
+]
+
+
+# ============================================================
+# Pista ativa
+#   "real"                 -> pontos/barreiras/obstaculos acima
+#   "sim4" / "sim5" / "sim6" -> pistas do Pack2/simulateN.py escaladas (ver sim_tracks.py)
+# A visao (track1.py / cam.py) e o controlo (run_real*.py) leem daqui, por isso usam
+# sempre a mesma pista.
+# ============================================================
+TRACK_NAME = "real"
+
+# Ilhas interiores alem da BARRIER_INNER_M (pista em 8 -> 2 ilhas); vazio na pista real
+BARRIER_INNER_EXTRA_M = []
+
+if TRACK_NAME != "real":
+    from sim_tracks import load_sim_track
+
+    _sim_track = load_sim_track(TRACK_NAME)
+    TRACK_POINTS_M = _sim_track["track"]
+    BARRIER_INNER_M = _sim_track["inner"]
+    BARRIER_INNER_EXTRA_M = _sim_track.get("inner_extra", [])
+    BARRIER_OUTER_M = _sim_track["outer"]
+    OBSTACLES_M = _sim_track["obstacles"]

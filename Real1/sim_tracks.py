@@ -4,7 +4,8 @@ Pistas do Pack2 (simulate4/5/6) escaladas para a area da pista real.
 Os WAYPOINTS sao lidos diretamente do Pack2/simulateN.py (sem importar o modulo),
 por isso qualquer alteracao a pista na simulacao aparece aqui automaticamente.
 Barreiras e obstaculos sao gerados com a mesma regra da simulacao:
-  - barreiras = caminho +- SIM_HALF_WIDTH na normal
+  - barreiras = contorno a SIM_HALF_WIDTH do caminho (como o build_track_barriers do
+    simulate6): no 8 os offsets +-normal cruzavam-se, assim da o exterior + 2 ilhas
   - 5 obstaculos equidistantes ao longo do caminho, alternando +-SIM_OBS_OFFSET
 e depois tudo e escalado por REAL_SCALE e centrado em REAL_CENTER_M.
 
@@ -14,6 +15,8 @@ import ast
 from pathlib import Path
 
 import numpy as np
+from contourpy import contour_generator
+from scipy.spatial import cKDTree
 
 from controller import build_spline_path
 
@@ -36,6 +39,7 @@ SIM_N_OBS = 5
 SIM_OBS_OFFSET = 0.3
 SIM_OBS_R = 0.35
 SIM_DS = 0.01
+SIM_GRID = 0.02  # resolucao da grelha do contorno das barreiras [m simulacao]
 
 # Espacamento dos pontos das barreiras [m simulacao] (pontos editaveis no track1.py)
 BARRIER_POINT_SPACING = 0.7
@@ -59,6 +63,37 @@ def _read_waypoints(track_name):
     raise RuntimeError(f"Nao encontrei WAYPOINTS em {path}.")
 
 
+def _poly_area(poly):
+    return 0.5 * abs(np.dot(poly[:, 0], np.roll(poly[:, 1], -1))
+                     - np.dot(np.roll(poly[:, 0], -1), poly[:, 1]))
+
+
+def _resample_closed(poly, spacing):
+    """Pontos equidistantes (por comprimento de arco) num poligono fechado, sem repetir o 1o."""
+    if not np.allclose(poly[0], poly[-1]):
+        poly = np.vstack([poly, poly[0]])
+    s = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(poly, axis=0).T))])
+    n = max(3, int(round(s[-1] / spacing)))
+    t = np.linspace(0.0, s[-1], n, endpoint=False)
+    return np.column_stack([np.interp(t, s, poly[:, 0]), np.interp(t, s, poly[:, 1])])
+
+
+def _build_barriers(px, py):
+    """
+    Limites da pista = curva de nivel a SIM_HALF_WIDTH do caminho (igual ao simulate6).
+    Retorna (ilhas, exterior); ilhas ordenadas da maior para a menor.
+    """
+    pad = SIM_HALF_WIDTH + 0.5
+    gx = np.arange(px.min() - pad, px.max() + pad, SIM_GRID)
+    gy = np.arange(py.min() - pad, py.max() + pad, SIM_GRID)
+    GX, GY = np.meshgrid(gx, gy)
+    dist, _ = cKDTree(np.column_stack([px, py])).query(np.column_stack([GX.ravel(), GY.ravel()]))
+    lines = contour_generator(gx, gy, dist.reshape(GX.shape)).lines(SIM_HALF_WIDTH)
+    lines = sorted(lines, key=_poly_area, reverse=True)
+    polys = [_resample_closed(line, BARRIER_POINT_SPACING) for line in lines]
+    return polys[1:], polys[0]
+
+
 def _to_real(points):
     pts = np.asarray(points, dtype=float)
     cx = 0.5 * (SIM_BOX_X[0] + SIM_BOX_X[1])
@@ -71,6 +106,7 @@ def _to_real(points):
 def load_sim_track(track_name):
     """
     Devolve dict com 'track', 'inner', 'outer' (listas de (x, y) em metros reais),
+    'inner_extra' (ilhas interiores alem da 'inner': 1 no simulate6, 0 nos outros),
     'obstacles' (lista de {"x", "y", "r"}) e 'start' (x, y, yaw) do inicio do caminho.
     """
     waypoints = _read_waypoints(track_name)
@@ -91,16 +127,8 @@ def load_sim_track(track_name):
         for x, y in _to_real(obs_xy)
     ]
 
-    # barreiras: offsets +-SIM_HALF_WIDTH (no simulate6 cruzam-se no centro do 8)
-    step = max(1, int(round(BARRIER_POINT_SPACING / SIM_DS)))
-    left = np.column_stack([px + SIM_HALF_WIDTH * nx, py + SIM_HALF_WIDTH * ny])[::step]
-    right = np.column_stack([px - SIM_HALF_WIDTH * nx, py - SIM_HALF_WIDTH * ny])[::step]
-
-    def area(poly):
-        return 0.5 * abs(np.dot(poly[:, 0], np.roll(poly[:, 1], -1))
-                         - np.dot(np.roll(poly[:, 0], -1), poly[:, 1]))
-
-    inner, outer = (left, right) if area(left) < area(right) else (right, left)
+    # barreiras: contorno a SIM_HALF_WIDTH do caminho (nao se cruzam no centro do 8)
+    islands, outer = _build_barriers(px, py)
 
     # o caminho real fecha sozinho (build_rounded_polyline closed=True): tirar o ponto repetido
     if np.allclose(waypoints[0], waypoints[-1]):
@@ -108,7 +136,8 @@ def load_sim_track(track_name):
 
     return {
         "track": _to_real(waypoints),
-        "inner": _to_real(inner),
+        "inner": _to_real(islands[0]),
+        "inner_extra": [_to_real(island) for island in islands[1:]],
         "outer": _to_real(outer),
         "obstacles": obstacles,
         "start": (*_to_real([(px[0], py[0])])[0], float(pyaw[0])),
@@ -123,5 +152,6 @@ if __name__ == "__main__":
             f"{name}: {len(t['track'])} pontos | x=[{xy[:, 0].min():.2f}, {xy[:, 0].max():.2f}] "
             f"y=[{xy[:, 1].min():.2f}, {xy[:, 1].max():.2f}] m | "
             f"inicio=({t['start'][0]:.2f}, {t['start'][1]:.2f}) m, "
-            f"yaw={np.degrees(t['start'][2]):.0f} graus | obstaculos={len(t['obstacles'])}"
+            f"yaw={np.degrees(t['start'][2]):.0f} graus | obstaculos={len(t['obstacles'])} | "
+            f"ilhas={1 + len(t['inner_extra'])}"
         )

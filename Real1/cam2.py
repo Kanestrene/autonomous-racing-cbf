@@ -7,6 +7,7 @@ import cv2
 from pupil_apriltags import Detector
 from ultralytics import YOLO
 from shared_config import OBSTACLES_M, TRACK_POINTS_M
+from undistort import undistort_frame
 
 # =========================
 # CONFIG
@@ -343,7 +344,7 @@ class Camera:
         ret, frame = self._cam.read()
         if not ret or frame is None or not _is_valid_frame(frame):
             raise RuntimeError("Erro ao capturar frame válido")
-        return frame
+        return undistort_frame(frame)
 
     def stop(self):
         self._cam.release()

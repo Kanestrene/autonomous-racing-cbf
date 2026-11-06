@@ -384,7 +384,7 @@ async def run_real():
             else:
                 delta_send = delta
 
-            esp32_msg = await esp32.send_cmd(v=v_safe, delta=delta)
+            esp32_msg = await esp32.send_cmd(v=v_safe, delta= - delta)
             #esp32_msg = await esp32.send_cmd(v=0.0, delta=0.3)
 
             print(
