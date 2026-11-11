@@ -40,4 +40,10 @@ Real2.5 --> modeificação de parametros
 
 Real2.7 --> copy 2.5 + angles with tags
 
-Real2.8 --> copy 2.7 + delay state estimation compensation
+Real2.8 --> copy 2.7 + delay state estimation compensation 
+
+Real2.9 --> copy 2.8 + change path/obstacles
+
+Real2.10 --> copy 2.8 + logs of track, state and obstacles (8 track)
+
+Real2.11 --> copy 2.10 + change track (original one)

@@ -3,6 +3,7 @@ from qpsolvers import solve_qp
 import cbf 
 import clf2
 from shared_config import (
+    BARRIER_INNER_EXTRA_M,
     BARRIER_INNER_M,
     BARRIER_OUTER_M,
     BARRIER_ROUND_CORNER_RADIUS_M,
@@ -69,9 +70,19 @@ def get_dense_barriers():
             corner_samples=BARRIER_ROUND_CORNER_SAMPLES,
             closed=True,
         )
+        extra = [
+            np.asarray(build_rounded_polyline(
+                island,
+                corner_radius=BARRIER_ROUND_CORNER_RADIUS_M,
+                corner_samples=BARRIER_ROUND_CORNER_SAMPLES,
+                closed=True,
+            ), dtype=float)
+            for island in BARRIER_INNER_EXTRA_M
+        ]
         _BARRIER_CACHE = (
             np.asarray(inner, dtype=float),
             np.asarray(outer, dtype=float),
+            extra,
         )
 
     return _BARRIER_CACHE
@@ -104,12 +115,13 @@ def cbf_qp_filter(u_nom, robot_state, obstacles,
         lookahead_l=lookahead_l, alpha=alpha
     )
 
-    inner, outer = get_dense_barriers()
+    inner, outer, extra = get_dense_barriers()
     
     G_barrier, h_barrier = cbf.cbf_rows_for_barriers(
         x, y, th,
         barrier_inner=inner,
         barrier_outer=outer,
+        barrier_extra=extra,
         ellipse_ab=ellipse_ab,
         margin=margin,
         lookahead_l=0.1,
@@ -219,12 +231,13 @@ def cbf_clf_qp_filter(
     # ----------------------------------
     # CBF barreiras
     # ----------------------------------
-    inner, outer = get_dense_barriers()
+    inner, outer, extra = get_dense_barriers()
 
     G_bar_2, h_bar = cbf.cbf_rows_for_barriers(
         x, y, th,
         barrier_inner=inner,
         barrier_outer=outer,
+        barrier_extra=extra,
         ellipse_ab=ellipse_ab,
         margin=margin,
         lookahead_l=0.1,

@@ -83,9 +83,11 @@ def cbf_rows_for_barriers(x, y, th,
                             margin=0.05,
                             lookahead_l=0.35,
                             alpha=2.0,
-                            max_segments=40):
+                            max_segments=40,
+                            barrier_extra=()):
     """
     CBF para 2 barreiras (interna e externa), dadas como arrays Nx2 (fechados ou não).
+    barrier_extra: outras barreiras fechadas (ex.: 2.a ilha da pista em 8).
     Retorna G, h para G u <= h, u=[v,w].
 
     - Usa ponto lookahead p = [x + l cos(th), y + l sin(th)]
@@ -168,7 +170,7 @@ def cbf_rows_for_barriers(x, y, th,
 
     G_list_all, h_list_all = [], []
 
-    for poly in (barrier_inner, barrier_outer):
+    for poly in (barrier_inner, *barrier_extra, barrier_outer):
         Gi, hi = add_constraints_from_poly(poly)
         G_list_all.extend(Gi)
         h_list_all.extend(hi)

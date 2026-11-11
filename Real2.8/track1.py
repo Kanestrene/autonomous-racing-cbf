@@ -36,7 +36,6 @@ from shared_config import (
     GREEN_HSV_UPPER,
     MARKER_THETA_OFFSET_DEG,
     OBSTACLES_M,
-    TRACK_NAME,
     TRACK_POINTS_M,
 )
 from undistort import undistort_frame
@@ -540,10 +539,24 @@ def edit_control_points(event, x, y, flags, param):
         edit_drag_target = None
 
 
-def _format_points_block(points):
+def _format_coord(value):
+    # 3 casas (pistas sim), sem o zero final: 0.520 -> 0.52
+    text = f"{float(value):.3f}"
+    return text[:-1] if text.endswith("0") else text
+
+
+def _format_points_block(points, indent=""):
     lines = ["["]
     for x_m, y_m in points:
-        lines.append(f"    ({float(x_m):.2f}, {float(y_m):.2f}),")
+        lines.append(f"{indent}    ({_format_coord(x_m)}, {_format_coord(y_m)}),")
+    lines.append(f"{indent}]")
+    return "\n".join(lines)
+
+
+def _format_islands_block(islands):
+    lines = ["["]
+    for island in islands:
+        lines.append(f"    {_format_points_block(island, indent='    ')},")
     lines.append("]")
     return "\n".join(lines)
 
@@ -553,16 +566,16 @@ def _format_obstacles_block(obstacles):
     for obstacle in obstacles:
         lines.append(
             "    "
-            f'{{"x": {float(obstacle["x"]):.2f}, '
-            f'"y": {float(obstacle["y"]):.2f}, '
-            f'"r": {float(obstacle["r"]):.2f}}},'
+            f'{{"x": {_format_coord(obstacle["x"])}, '
+            f'"y": {_format_coord(obstacle["y"])}, '
+            f'"r": {_format_coord(obstacle["r"])}}},'
         )
     lines.append("]")
     return "\n".join(lines)
 
 
-def _replace_points_block(text, name, points, followed_by=None):
-    replacement = f"{name} = {_format_points_block(points)}"
+def _replace_points_block(text, name, points, followed_by=None, formatter=None):
+    replacement = f"{name} = {(formatter or _format_points_block)(points)}"
     pattern = rf"{name}\s*=\s*\[\n.*?\n\]"
     if followed_by is not None:
         pattern += rf"(?=\s*{followed_by})"
@@ -602,13 +615,6 @@ def _replace_obstacles_block(text, name, obstacles):
 def save_control_points_to_shared_config():
     global edited_points_dirty
 
-    if TRACK_NAME != "real":
-        print(
-            f"Pista '{TRACK_NAME}' vem do Pack2 (sim_tracks.py): nao guardo em "
-            f"{SHARED_CONFIG_PATH.name} para nao substituir a pista real."
-        )
-        return
-
     text = SHARED_CONFIG_PATH.read_text(encoding="utf-8")
     text = _replace_points_block_before_marker(
         text,
@@ -617,6 +623,9 @@ def save_control_points_to_shared_config():
         marker="BARRIER_ROUND_CORNER_RADIUS_M",
     )
     text = _replace_points_block(text, "BARRIER_INNER_M", BARRIER_INNER_M)
+    text = _replace_points_block(
+        text, "BARRIER_INNER_EXTRA_M", BARRIER_INNER_EXTRA_M, formatter=_format_islands_block
+    )
     text = _replace_points_block(text, "BARRIER_OUTER_M", BARRIER_OUTER_M)
     text = _replace_obstacles_block(text, "OBSTACLES_M", OBSTACLES_M)
     SHARED_CONFIG_PATH.write_text(text, encoding="utf-8")
@@ -689,7 +698,7 @@ def _build_static_overlay():
     )
     lines.append((_points_m_to_px_array(path_m), _points_m_to_px_array(TRACK_POINTS_M), (255, 0, 0), 4))
 
-    for barrier_m in [BARRIER_INNER_M, *BARRIER_INNER_EXTRA_M, BARRIER_OUTER_M]:
+    for _, barrier_m in _editable_point_sets()[1:]:
         rounded_m = build_rounded_polyline(
             list(barrier_m),
             corner_radius=BARRIER_ROUND_CORNER_RADIUS_M,
@@ -1211,20 +1220,6 @@ def carcontour(frame, draw_flag=0):
 #Parameters: Car's contour, track's contour, draw_flag and current frame
 #Returns: Car's centre (x, y) and (if draw_flag -> 1) the frame with center drawn
 #Updates lap time and lap number, and gives window a slight red tint if car out of bounds
-def draw_heading(img, x, y, front_px, theta_rad):
-    # seta = angulo enviado (bolinhas + desvio estimado): ciano com bolinhas,
-    # laranja se veio do deslocamento; ponto ciano = bolinha da frente detetada
-    if front_px is not None:
-        fx, fy = int(round(front_px[0])), int(round(front_px[1]))
-        cv2.circle(img, (fx, fy), 4, (255, 255, 0), -1, cv2.LINE_AA)
-    if PIXEL_TO_METER is not None:
-        color = (255, 255, 0) if front_px is not None else (0, 140, 255)
-        length_px = MARKER_MAX_DIST_M / abs(PIXEL_TO_METER) * 0.5
-        tip = (int(round(x + length_px * np.cos(theta_rad))),
-               int(round(y - length_px * np.sin(theta_rad))))
-        cv2.arrowedLine(img, (x, y), tip, color, 2, cv2.LINE_AA, tipLength=0.3)
-
-
 def carcentre(car_contour, track_contour, draw_flag=0, img=None, src_frame=None):
 
     global FINISHING_LINE_MIN_X, FINISHING_LINE_MAX_X, FINISHING_LINE_MIN_Y, FINISHING_LINE_MAX_Y, red, lap_number, lap_start_time, lap_time, batota, f_red, aux, front_marker_ok
@@ -1274,19 +1269,8 @@ def carcentre(car_contour, track_contour, draw_flag=0, img=None, src_frame=None)
                 lap_start_time = time.time()
 
             aux = 0
-            draw_heading(img, x, y, front_px, theta_rad)
             cv2.circle(img, (x,y), radius = 2, color=[0, 255, 0],
                     thickness=5)
-            cv2.putText(
-                img,
-                f"x={x_m:.3f}m y={y_m:.3f}m th={theta_deg:.1f}deg",
-                (x + 10, y - 10),
-                font,
-                fontScale,
-                (0, 255, 0),
-                thickness,
-                cv2.LINE_AA
-            )
             
             f_red = 0
 
@@ -1309,18 +1293,7 @@ def carcentre(car_contour, track_contour, draw_flag=0, img=None, src_frame=None)
                 lap_number += 1
                 aux = 1
             
-            draw_heading(img, x, y, front_px, theta_rad)
             cv2.circle(img, (x, y), 2, (0, 255, 255), 5)
-            cv2.putText(
-                img,
-                f"x={x_m:.3f}m y={y_m:.3f}m th={theta_deg:.1f}deg",
-                (x + 10, y - 10),
-                font,
-                fontScale,
-                (0, 255, 255),
-                thickness,
-                cv2.LINE_AA
-            )
             return x, y, img
             
         #Out of Bounds
@@ -1334,17 +1307,6 @@ def carcentre(car_contour, track_contour, draw_flag=0, img=None, src_frame=None)
             if red is not None:
                 cv2.addWeighted(img, alpha, red, beta, 0.0, img)
 
-            draw_heading(img, x, y, front_px, theta_rad)
-            cv2.putText(
-                img,
-                f"x={x_m:.3f}m y={y_m:.3f}m th={theta_deg:.1f}deg",
-                (x + 10, y - 10),
-                font,
-                fontScale,
-                (0, 0, 255),
-                thickness,
-                cv2.LINE_AA
-            )
             return x, y, img
 
 #View specific frames
